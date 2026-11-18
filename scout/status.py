@@ -35,8 +35,9 @@ def c_files():
     cfg = config()
     act = len(sources("active"))
     dead = len(sources("dead")) + len(sources("flaky"))
-    m = cfg["models"]
-    return True, f"{act} active sources ({dead} dead or flaky); cards {m['card']['id']}, scoring {m['flash_lite']['id']}, fallback {m['gemma']['id']}"
+    on_hydrogen = [j for j, a in cfg["jobs"].items() if a == "hydrogen"]
+    return True, (f"{act} active sources ({dead} dead or flaky); Hydrogen first for {', '.join(on_hydrogen)}; "
+                  f"fallback {' → '.join(cfg['fallback']['hydrogen'])} → qwen")
 
 
 def c_env():
@@ -73,7 +74,7 @@ def c_gemini_test():
                where provider = 'gemini' and kind = 'test' and status = 'ok' group by model_id"""
         ).fetchall()
     done = {r["model_id"] for r in rows}
-    need = {cfg["models"][a]["id"] for a in ("card", "flash_lite", "gemma")}
+    need = {cfg["models"][a]["id"] for a in ("hydrogen", "flash_lite", "gemma")}
     if need <= done:
         return True, "test calls succeeded on " + ", ".join(sorted(need))
     return False, "still to pass: " + ", ".join(sorted(need - done)) + " (run python -m scout.smoke gemini)"
@@ -142,7 +143,7 @@ def daily_report() -> None:
                 print(f"   Cards made             {s.get('cards', 'unknown')}")
             else:
                 print("   Last pipeline run      none yet (phase 1)")
-            for alias in ("card", "flash_lite", "gemma"):
+            for alias in ("hydrogen", "flash_lite", "gemma"):
                 mc = cfg["models"][alias]
                 cap = mc["cap_per_day"]
                 m = repo.gemini_calls_today(conn, mc["id"], "main")

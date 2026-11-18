@@ -23,16 +23,29 @@ skip_list:
 ai_angle: {show: true, boost: 0.5}
 weights: {pain: 1.0, why_now: 0.8, feasibility: 1.0, fits_you: 0.7}
 
-# Which model does which job (owner's choices, 2026-11-19). IDs are pinned and stored on every card.
+# Which model does each job first (owner, 2026-11-19: Hydrogen is first priority wherever it fits).
+# If that model fails or its daily allowance is used up, the job moves down the `fallback` chain.
+jobs:
+  extract: flash_lite     # bulk: 30-40 calls/day pulling names, amounts, countries out of articles.
+                          # Too many for Hydrogen's 20/day per key, and mechanical work.
+  score: hydrogen         # skip filter + Bangladesh/global scores + sub-scores (batches of 10)
+  card: hydrogen          # the 5 daily cards
+  deep_dive: hydrogen     # "More" button
+  friday: hydrogen        # Friday report deep dive
+  ask: hydrogen           # questions about public cards (private notes always go to Qwen)
+
+# Model settings. IDs are pinned and stored on every card.
 # free_limits are per key (each key is its own Google account), as reported for the free tier on
 # 2026-11-19. OWNER: confirm at aistudio.google.com/rate-limit, signed in with each account.
 models:
-  card:                           # writes cards, deep dives, Friday deep dive
+  hydrogen:
     id: gemini-4-hydrogen
     free_limits: {rpm: 5, tpm: 250000, rpd: 20}
-    cap_per_day: 12               # our own cap per key, below the free limit
+    cap_per_day: 18               # our own cap per key, below the free limit -> 36/day with both keys
+    reserve_for_chat: 8           # of those 36, the 07:00 pipeline leaves 8 for deep dives and ask
+                                  # (Google's quota day resets around 14:00 Dhaka, not at midnight)
     max_output_tokens: 65536
-  flash_lite:                     # extraction, screening, scoring, ask
+  flash_lite:
     id: gemini-3.5-flash-lite
     free_limits: {rpm: 15, tpm: 250000, rpd: 500}
     cap_per_day: 150
@@ -49,7 +62,7 @@ models:
 # When a model fails on both keys (busy, limit, error), try the next one. All free.
 # Qwen on Modal comes after the last one (phase 3).
 fallback:
-  card: [flash_lite, gemma]
+  hydrogen: [flash_lite, gemma]
   flash_lite: [gemma]
   gemma: []
 

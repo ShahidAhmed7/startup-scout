@@ -34,7 +34,7 @@ def smoke_gemini() -> None:
     from scout.llm.gemini import GeminiError, GeminiUnavailable, generate
 
     # (job, key) pairs. Uses config.yaml llm settings: high thinking, big output limit.
-    tests = [("flash_lite", "main"), ("flash_lite", "backup"), ("card", "main"), ("gemma", "main")]
+    tests = [("flash_lite", "main"), ("flash_lite", "backup"), ("hydrogen", "main"), ("hydrogen", "backup"), ("gemma", "main")]
     failed = []
     with repo.connect() as conn:
         for alias, key in tests:

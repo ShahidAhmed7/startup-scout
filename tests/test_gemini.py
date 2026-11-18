@@ -76,7 +76,7 @@ def test_both_keys_fail_raises_unavailable():
         "backup-key": [httpx.Response(503, json={}), httpx.Response(503, json={})],
     })
     with pytest.raises(gemini.GeminiUnavailable) as e:
-        gemini.generate("card", "x", kind="test", http=http)
+        gemini.generate("hydrogen", "x", kind="test", http=http)
     assert [label for label, _ in e.value.errors] == ["main", "backup"]
     assert [err.kind for _, err in e.value.errors] == ["quota", "server"]
 
@@ -111,13 +111,13 @@ def test_thought_parts_are_ignored():
     resp = httpx.Response(200, json={"candidates": [{"content": {"parts": [
         {"text": "thinking...", "thought": True}, {"text": "answer"}]}, "finishReason": "STOP"}]})
     http, _ = mock({"main-key": [resp]})
-    assert gemini.generate("card", "x", kind="test", http=http).text == "answer"
+    assert gemini.generate("hydrogen", "x", kind="test", http=http).text == "answer"
 
 
 def test_missing_main_key_goes_straight_to_backup(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY_MAIN")
     http, calls = mock({"backup-key": [ok_response("hi")]})
-    assert gemini.generate("card", "x", kind="test", http=http).key_label == "backup"
+    assert gemini.generate("hydrogen", "x", kind="test", http=http).key_label == "backup"
     assert calls == ["backup-key"]
 
 
@@ -141,7 +141,7 @@ def test_calls_use_owner_defaults_high_thinking_and_big_output():
         return ok_response({"ok": True})
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
-    gemini.generate("card", "x", kind="test", schema=SCHEMA, http=http)
+    gemini.generate("hydrogen", "x", kind="test", schema=SCHEMA, http=http)
     gen = sent["generationConfig"]
     assert gen["thinkingConfig"] == {"thinkingLevel": "high"}
     assert gen["maxOutputTokens"] == 65536
@@ -161,7 +161,7 @@ def test_chain_card_falls_back_to_flash_lite_then_gemma():
         return httpx.Response(429, json={})
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
-    r = gemini.generate_chain("card", "x", kind="card", schema=SCHEMA, http=http)
+    r = gemini.generate_chain("hydrogen", "x", kind="card", schema=SCHEMA, http=http)
     assert r.model_id == "gemma-4-31b-it" and r.key_label == "main"
     assert seen == [
         ("gemini-4-hydrogen", "main-key"), ("gemini-4-hydrogen", "backup-key"),
@@ -172,16 +172,16 @@ def test_chain_card_falls_back_to_flash_lite_then_gemma():
 
 def test_chain_stops_at_first_success():
     http, calls = mock({"main-key": [ok_response({"ok": True})]})
-    r = gemini.generate_chain("card", "x", kind="card", schema=SCHEMA, http=http)
+    r = gemini.generate_chain("hydrogen", "x", kind="card", schema=SCHEMA, http=http)
     assert r.model_id == "gemini-4-hydrogen" and calls == ["main-key"]
 
 
 def test_chain_all_fail_lists_every_error_for_qwen_router():
     http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(429, json={})))
     with pytest.raises(gemini.GeminiUnavailable) as e:
-        gemini.generate_chain("card", "x", kind="card", http=http)
+        gemini.generate_chain("hydrogen", "x", kind="card", http=http)
     assert [label for label, _ in e.value.errors] == [
-        "card/main", "card/backup", "flash_lite/main", "flash_lite/backup", "gemma/main", "gemma/backup"]
+        "hydrogen/main", "hydrogen/backup", "flash_lite/main", "flash_lite/backup", "gemma/main", "gemma/backup"]
 
 
 def test_gemma_output_limit_is_respected():
@@ -193,3 +193,50 @@ def test_gemma_output_limit_is_respected():
 
     gemini.generate("gemma", "x", kind="test", http=httpx.Client(transport=httpx.MockTransport(handler)))
     assert sent["generationConfig"]["maxOutputTokens"] == 32768
+
+
+class FakeUsage:
+    """Stands in for the database: counts Hydrogen calls already made today per key."""
+
+    def __init__(self, monkeypatch, used: dict):
+        from scout.db import repo
+        self.logged = []
+        monkeypatch.setattr(repo, "gemini_calls_today", lambda conn, model_id, label: used.get((model_id, label), 0))
+        monkeypatch.setattr(repo, "record_usage", lambda conn, **kw: self.logged.append(kw))
+
+
+def test_run_job_uses_hydrogen_for_scoring_and_flash_lite_for_extraction():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path.split("/models/")[1].split(":")[0])
+        return ok_response({"ok": True})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    assert gemini.run_job("score", "x", schema=SCHEMA, http=http).model_id == "gemini-4-hydrogen"
+    assert gemini.run_job("extract", "x", schema=SCHEMA, http=http).model_id == "gemini-3.5-flash-lite"
+    assert seen == ["gemini-4-hydrogen", "gemini-3.5-flash-lite"]
+
+
+def test_pipeline_leaves_reserved_hydrogen_calls_for_chat(monkeypatch):
+    # 2 keys x 18 cap = 36; reserve 8 -> pipeline stops using Hydrogen at 28 calls.
+    FakeUsage(monkeypatch, {("gemini-4-hydrogen", "main"): 18, ("gemini-4-hydrogen", "backup"): 10})
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path.split("/models/")[1].split(":")[0])
+        return ok_response({"ok": True})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    r = gemini.run_job("card", "x", schema=SCHEMA, http=http, conn=object())
+    assert r.model_id == "gemini-3.5-flash-lite"          # pipeline fell back
+    assert "gemini-4-hydrogen" not in seen
+    r = gemini.run_job("deep_dive", "x", schema=SCHEMA, http=http, conn=object())
+    assert r.model_id == "gemini-4-hydrogen" and r.key_label == "backup"   # chat may use the reserve
+
+
+def test_pipeline_uses_hydrogen_below_the_reserve(monkeypatch):
+    FakeUsage(monkeypatch, {("gemini-4-hydrogen", "main"): 18, ("gemini-4-hydrogen", "backup"): 9})
+    http, calls = mock({"backup-key": [ok_response({"ok": True})]})
+    r = gemini.run_job("score", "x", schema=SCHEMA, http=http, conn=object())
+    assert r.model_id == "gemini-4-hydrogen" and r.key_label == "backup"

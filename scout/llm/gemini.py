@@ -64,7 +64,8 @@ def classify(status: int, body: str) -> str:
     return "bad_request"
 
 
-GOOGLE_ALIASES = ("card", "flash_lite", "gemma")  # models served by the Gemini API
+GOOGLE_ALIASES = ("hydrogen", "flash_lite", "gemma")  # models served by the Gemini API
+CHAT_KINDS = {"deep_dive", "ask", "test"}  # owner-initiated: may use the reserved Hydrogen calls
 
 
 def model_cfg(alias: str) -> dict:
@@ -154,7 +155,7 @@ def generate(alias: str, prompt: str, *, kind: str, schema: dict | None = None, 
              validate: Callable[[object], None] | None = None, temperature: float | None = None,
              thinking_level: str | None = None, max_output_tokens: int | None = None,
              conn=None, only_key: str | None = None, http: httpx.Client | None = None) -> Result:
-    """Call one model (`alias` from config.yaml models: "card", "flash_lite", "gemma"): main key, then backup key.
+    """Call one model (`alias` from config.yaml models: "hydrogen", "flash_lite", "gemma"): main key, then backup key.
 
     - schema: JSON schema for structured output; the reply is parsed into Result.data.
     - validate: extra check on Result.data; raise ValueError to reject. Bad output is retried once
@@ -183,6 +184,15 @@ def generate(alias: str, prompt: str, *, kind: str, schema: dict | None = None, 
                               tokens_out=res.tokens_out if res else None)
 
     try:
+        # Pipeline jobs leave `reserve_for_chat` calls of this model for the owner's deep dives and asks.
+        reserve = mcfg.get("reserve_for_chat", 0)
+        if conn is not None and reserve and kind not in CHAT_KINDS and only_key is None:
+            used = sum(repo.gemini_calls_today(conn, model_id, label) for label, _ in KEYS)
+            if used >= len(KEYS) * cap - reserve:
+                for label, _ in KEYS:
+                    log(label, "cap")
+                raise GeminiUnavailable([(label, GeminiError("cap", f"last {reserve} calls kept for chat"))
+                                         for label, _ in KEYS])
         for label, env_name in KEYS:
             if only_key and label != only_key:
                 continue
@@ -237,6 +247,12 @@ def generate_chain(alias: str, prompt: str, **kwargs) -> Result:
         except GeminiUnavailable as e:
             errors += [(f"{a}/{label}", err) for label, err in e.errors]
     raise GeminiUnavailable(errors)
+
+
+def run_job(job: str, prompt: str, **kwargs) -> Result:
+    """Run a pipeline/chat job ("extract", "score", "card", "deep_dive", "friday", "ask") on the model
+    config.yaml `jobs` assigns it (Hydrogen first wherever it fits), with the fallback chain behind it."""
+    return generate_chain(config()["jobs"][job], prompt, kind=job, **kwargs)
 
 
 def check_key(key_label: str, http: httpx.Client | None = None) -> dict[str, str]:
