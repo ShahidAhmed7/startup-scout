@@ -1,10 +1,11 @@
 """Gemini API client (Gemini 4 Hydrogen, Flash-Lite, Gemma 4 — all on the free tier).
 
-Hard rule 4: always try GEMINI_API_KEY_MAIN first; switch to GEMINI_API_KEY_BACKUP only when
-the main key fails (error, quota/limit, our own cap, revoked key).
-Owner's fallback order (2026-11-19): if a model fails on both keys, generate_chain() tries the
-next free model from config.yaml `fallback`; only when all fail does the router (phase 3) use
-Qwen on Modal.
+Keys (owner, 2026-11-19, updates hard rule 4): both keys work IN PARALLEL. Each call claims a
+free key (main if both are free), so while one key is busy the other takes the next task. If the
+claimed key fails (error, quota/limit, our own cap, revoked key), the call fails over to the other
+key. run_parallel() runs several jobs at once across both keys.
+Owner's fallback order: if a model fails on both keys, generate_chain() tries the next free model
+from config.yaml `fallback`; only when all fail does the router (phase 3) use Qwen on Modal.
 
 Hard rule 5: only public data may be sent here. Private notes go to Qwen only.
 """
@@ -13,6 +14,8 @@ from __future__ import annotations
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -78,19 +81,43 @@ def model_id_for(alias: str) -> str:
 
 # ---------- per-minute spacing (stay under the free tier's requests/minute) ----------
 
-_last_call: dict[tuple[str, str], float] = {}
+_next_slot: dict[tuple[str, str], float] = {}
 _lock = threading.Lock()
 
 
 def _throttle(key_label: str, alias: str) -> None:
+    """Space calls per (key, model) to respect requests/minute. Each key has its own clock, so a
+    wait on one key never holds up the other key."""
     rpm = model_cfg(alias)["free_limits"]["rpm"]
     gap = 60.0 / rpm + 0.5
-    with _lock:
-        last = _last_call.get((key_label, alias), 0.0)
-        wait = last + gap - time.monotonic()
-        if wait > 0:
-            time.sleep(wait)
-        _last_call[(key_label, alias)] = time.monotonic()
+    with _lock:  # only book the slot under the lock; sleep outside it
+        slot = max(time.monotonic(), _next_slot.get((key_label, alias), 0.0))
+        _next_slot[(key_label, alias)] = slot + gap
+    wait = slot - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+
+
+# ---------- key pool: both keys work in parallel ----------
+
+_busy: set[tuple[str, str]] = set()
+_pool = threading.Condition()
+
+
+@contextmanager
+def _claim_key(alias: str, labels: list[str]):
+    """Claim a free key for this model (main first when both are free). Waits if all are busy."""
+    with _pool:
+        while all((alias, l) in _busy for l in labels):
+            _pool.wait()
+        label = next(l for l in labels if (alias, l) not in _busy)
+        _busy.add((alias, label))
+    try:
+        yield label
+    finally:
+        with _pool:
+            _busy.discard((alias, label))
+            _pool.notify_all()
 
 
 RETRY_SAME_KEY = {"bad_output", "server", "network"}
@@ -193,41 +220,42 @@ def generate(alias: str, prompt: str, *, kind: str, schema: dict | None = None, 
                     log(label, "cap")
                 raise GeminiUnavailable([(label, GeminiError("cap", f"last {reserve} calls kept for chat"))
                                          for label, _ in KEYS])
-        for label, env_name in KEYS:
-            if only_key and label != only_key:
-                continue
-            key = env(env_name)
-            if not key:
-                continue
-            if conn is not None and repo.gemini_calls_today(conn, model_id, label) >= cap:
-                err = GeminiError("cap", f"our daily cap of {cap} reached")
-                log(label, "cap")
-                errors.append((label, err))
-                continue
-            for attempt in (1, 2):
-                _throttle(label, alias)
-                try:
-                    raw = _call_once(http, key, model_id, prompt, schema=schema, system=system,
-                                     temperature=temperature, thinking_level=thinking_level,
-                                     max_output_tokens=max_output_tokens, timeout=timeout)
-                    res = _parse(raw, model_id, label, want_json=schema is not None)
-                    if validate is not None:
-                        try:
-                            validate(res.data)
-                        except ValueError as e:
-                            raise GeminiError("bad_output", f"failed validation: {e}") from None
-                    log(label, "ok", res)
-                    return res
-                except GeminiError as e:
-                    log(label, e.kind)
-                    if e.kind == "bad_request":
-                        raise  # our request is wrong; another key won't help
-                    if e.kind in RETRY_SAME_KEY and attempt == 1:
-                        if e.kind in ("server", "network"):
-                            _backoff()  # "high demand" 503s and timeouts are usually short-lived
-                        continue  # retry once on the same key
-                    errors.append((label, e))
-                    break  # move on to the next key
+        labels = [label for label, env_name in KEYS
+                  if env(env_name) and (only_key is None or label == only_key)]
+        if not labels:
+            raise GeminiUnavailable([])
+        # Claim a free key (both keys work in parallel); fail over to the other key if it fails.
+        with _claim_key(alias, labels) as first:
+            for label in [first, *[l for l in labels if l != first]]:
+                key = env(dict(KEYS)[label])
+                if conn is not None and repo.gemini_calls_today(conn, model_id, label) >= cap:
+                    log(label, "cap")
+                    errors.append((label, GeminiError("cap", f"our daily cap of {cap} reached")))
+                    continue
+                for attempt in (1, 2):
+                    _throttle(label, alias)
+                    try:
+                        raw = _call_once(http, key, model_id, prompt, schema=schema, system=system,
+                                         temperature=temperature, thinking_level=thinking_level,
+                                         max_output_tokens=max_output_tokens, timeout=timeout)
+                        res = _parse(raw, model_id, label, want_json=schema is not None)
+                        if validate is not None:
+                            try:
+                                validate(res.data)
+                            except ValueError as e:
+                                raise GeminiError("bad_output", f"failed validation: {e}") from None
+                        log(label, "ok", res)
+                        return res
+                    except GeminiError as e:
+                        log(label, e.kind)
+                        if e.kind == "bad_request":
+                            raise  # our request is wrong; another key won't help
+                        if e.kind in RETRY_SAME_KEY and attempt == 1:
+                            if e.kind in ("server", "network"):
+                                _backoff()  # "high demand" 503s and timeouts are usually short-lived
+                            continue  # retry once on the same key
+                        errors.append((label, e))
+                        break  # fail over to the other key
         raise GeminiUnavailable(errors)
     finally:
         if own_http:
@@ -253,6 +281,23 @@ def run_job(job: str, prompt: str, **kwargs) -> Result:
     """Run a pipeline/chat job ("extract", "score", "card", "deep_dive", "friday", "ask") on the model
     config.yaml `jobs` assigns it (Hydrogen first wherever it fits), with the fallback chain behind it."""
     return generate_chain(config()["jobs"][job], prompt, kind=job, **kwargs)
+
+
+def run_parallel(tasks: list[tuple[str, str, dict]], workers: int | None = None) -> list[Result | Exception]:
+    """Run several jobs at once, spread across both keys (owner, 2026-11-19).
+
+    tasks: [(job, prompt, kwargs), ...]. Returns one entry per task, in order: the Result, or the
+    exception if that task failed (so one failure never loses the others' work).
+    Example: 5 cards -> main and backup each write one at a time, side by side.
+    """
+    workers = workers or len(KEYS)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(run_job, job, prompt, **kw) for job, prompt, kw in tasks]
+        out: list[Result | Exception] = []
+        for f in futures:
+            err = f.exception()
+            out.append(err if err is not None else f.result())
+        return out
 
 
 def check_key(key_label: str, http: httpx.Client | None = None) -> dict[str, str]:

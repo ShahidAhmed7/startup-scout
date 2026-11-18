@@ -240,3 +240,66 @@ def test_pipeline_uses_hydrogen_below_the_reserve(monkeypatch):
     http, calls = mock({"backup-key": [ok_response({"ok": True})]})
     r = gemini.run_job("score", "x", schema=SCHEMA, http=http, conn=object())
     assert r.model_id == "gemini-4-hydrogen" and r.key_label == "backup"
+
+
+# ---------- both keys in parallel (owner, 2026-11-19) ----------
+
+REAL_THROTTLE = gemini._throttle  # captured at import, before the autouse fixture patches it
+
+
+def test_parallel_jobs_use_both_keys_at_the_same_time():
+    import threading
+    import time
+    lock = threading.Lock()
+    state = {"now": 0, "max": 0}
+    keys = []
+
+    def handler(request):
+        with lock:
+            state["now"] += 1
+            state["max"] = max(state["max"], state["now"])
+            keys.append(request.headers["x-goog-api-key"])
+        time.sleep(0.2)
+        with lock:
+            state["now"] -= 1
+        return ok_response({"ok": True})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    results = gemini.run_parallel([("card", f"card {i}", {"schema": SCHEMA, "http": http}) for i in range(4)])
+    assert all(r.model_id == "gemini-4-hydrogen" for r in results)
+    assert state["max"] == 2                       # two requests in flight at once
+    assert keys.count("main-key") == 2 and keys.count("backup-key") == 2
+
+
+def test_parallel_one_failed_task_keeps_the_others():
+    def handler(request):
+        if b"bad" in request.content:
+            return httpx.Response(400, json={"error": {"message": "bad request"}})
+        return ok_response({"ok": True})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    results = gemini.run_parallel([("score", p, {"schema": SCHEMA, "http": http}) for p in ("good", "bad", "good")])
+    assert results[0].data == {"ok": True} and results[2].data == {"ok": True}
+    assert isinstance(results[1], gemini.GeminiError) and results[1].kind == "bad_request"
+
+
+def test_parallel_failover_when_one_key_is_out_of_quota():
+    def handler(request):
+        if request.headers["x-goog-api-key"] == "main-key":
+            return httpx.Response(429, json={})
+        return ok_response({"ok": True})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    results = gemini.run_parallel([("card", f"c{i}", {"schema": SCHEMA, "http": http}) for i in range(3)])
+    assert [r.key_label for r in results] == ["backup", "backup", "backup"]
+
+
+def test_throttle_wait_on_one_key_never_delays_the_other(monkeypatch):
+    slept = []
+    monkeypatch.setattr(gemini.time, "sleep", lambda s: slept.append(s))
+    gemini._next_slot.clear()
+    REAL_THROTTLE("main", "hydrogen")
+    REAL_THROTTLE("main", "hydrogen")     # same key: must wait ~12.5s (5 requests/minute)
+    REAL_THROTTLE("backup", "hydrogen")   # other key: no wait
+    gemini._next_slot.clear()
+    assert len(slept) == 1 and 12 <= slept[0] <= 12.5
