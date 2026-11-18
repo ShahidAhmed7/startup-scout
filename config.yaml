@@ -1,0 +1,64 @@
+# Owner settings. No secrets here (those live in .env and the Modal secret "scout-secrets").
+# Settings changed by chat (time, mix, skip list, skills) are stored in the database
+# `settings` table and override the values below.
+
+timezone: Asia/Dhaka
+output_language: English        # every message is in English; non-English sources are translated
+digest_time: "08:00"
+digest_mix: {bangladesh: 3, global: 2}
+min_score: 6
+
+owner:
+  skills: [AI and machine learning, Python, web apps]
+
+skip_list:
+  - frontier AI model labs
+  - chips and semiconductors
+  - robotics hardware
+  - data centers and GPU clouds
+  - energy infrastructure
+  - space
+  - biotech wet labs
+
+ai_angle: {show: true, boost: 0.5}
+weights: {pain: 1.0, why_now: 0.8, feasibility: 1.0, fits_you: 0.7}
+
+models:
+  gemini_flash: gemini-3.8-flash            # verified in both keys' model lists, 2026-11-19
+  gemini_flash_lite: gemini-3.5-flash-lite  # verified in both keys' model lists, 2026-11-19
+  qwen: Qwen/Qwen3.6-27B-FP8                # verified on Hugging Face 2026-11-19 (Apache 2.0, public); FP8 fits one A100 80GB
+
+# How every Gemini call runs (owner's choice: big limits, think hard).
+llm:
+  thinking_level: high            # minimal | low | medium | high
+  max_output_tokens: 65536        # model maximum for both models (checked via the API, 2026-11-19)
+  max_input_tokens: 1048576       # context window for both models; prompts are built to fit inside this
+  request_timeout_seconds: 300    # high thinking can take a few minutes
+  temperature: null               # null = model default (1.0); Google advises not lowering it for Gemini 3
+
+# Real free-tier limits per key. Google no longer publishes them.
+# OWNER: read yours at aistudio.google.com/rate-limit and correct these numbers.
+gemini_limits:
+  flash: {rpm: 5, rpd: 20}
+  flash_lite: {rpm: 15, rpd: 500}
+
+# Our own caps, per key per day (below the real limits). Days reset at midnight Pacific time.
+caps:
+  gemini_flash_per_day: 12
+  gemini_flash_lite_per_day: 150
+
+budget:
+  modal_warn_usd: 20
+  modal_stop_usd: 25
+  # From modal.com/pricing, checked 2026-11-19
+  a100_80gb_usd_per_second: 0.000694        # about $2.50/hour
+  cpu_usd_per_core_second: 0.0000131
+  memory_usd_per_gib_second: 0.00000222
+  cpu_allowance_usd_per_month: 1.0          # small fixed allowance for crons + webhook
+
+whatsapp:
+  graph_api_version: v27.0                  # current per Meta docs, 2026-11-19
+  window_minutes: 1430                      # treat the 24h window as 23h 50m
+
+reports: {friday: true, monthly: true}
+markets_like_ours: [India, Pakistan, Indonesia, Philippines, Vietnam, Nigeria, Kenya, Egypt, Middle East]

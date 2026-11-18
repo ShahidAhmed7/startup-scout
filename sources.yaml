@@ -1,0 +1,220 @@
+# Where Startup Scout reads news. All free. Every URL was tested on 2026-11-19.
+#
+# Fields:
+#   id        unique, used in the database
+#   kind      rss | api | gnews (Google News RSS search) | gdelt
+#   region    global | usa | europe | india | pakistan | mideast | africa | sea | china | bangladesh
+#   role      funding (goes through funding extraction) | context (Bangladesh/market context, competitor checks)
+#   priority  high | normal   (owner: YC and US news are top priority; trim "normal" first if volume is too high)
+#   lang      en unless noted; non-English items are translated to English during extraction
+#   status    active | spare (works, not fetched yet) | flaky (try again later) | dead (don't use)
+#
+# Politeness: one clear User-Agent, conditional GET (ETag / Last-Modified), at least 1 second
+# between requests to the same host, never bypass paywalls, logins or 403 blocks.
+
+defaults:
+  user_agent: "StartupScout/0.1 (private news digest; polite RSS reader)"
+  lookback_hours: 36
+  min_seconds_between_requests_same_host: 1.0
+  timeout_seconds: 20
+
+sources:
+  # ---------- YC and USA (top priority) ----------
+  - {id: yc_oss, name: "YC companies (yc-oss API)", kind: api, region: usa, role: funding, priority: high, status: active,
+     url: "https://yc-oss.github.io/api/meta.json",
+     note: "Unofficial, rebuilt daily from YC's directory. Diff batches/<batch>.json against yesterday to find new companies."}
+  - {id: hn_launch, name: "Launch HN (Algolia)", kind: api, region: usa, role: funding, priority: high, status: active,
+     url: "https://hn.algolia.com/api/v1/search_by_date?query=%22Launch%20HN%22&tags=story&hitsPerPage=50",
+     note: "Points = buzz signal."}
+  - {id: techcrunch_venture, name: "TechCrunch Venture", kind: rss, region: usa, role: funding, priority: high, status: active,
+     url: "https://techcrunch.com/category/venture/feed/"}
+  - {id: techcrunch_startups, name: "TechCrunch Startups", kind: rss, region: usa, role: funding, priority: high, status: active,
+     url: "https://techcrunch.com/category/startups/feed/"}
+  - {id: techcrunch_ai, name: "TechCrunch AI", kind: rss, region: usa, role: funding, priority: high, status: active,
+     url: "https://techcrunch.com/category/artificial-intelligence/feed/"}
+  - {id: crunchbase_news, name: "Crunchbase News", kind: rss, region: usa, role: funding, priority: high, status: active,
+     url: "https://news.crunchbase.com/feed/"}
+  - {id: saas_news, name: "The SaaS News", kind: rss, region: usa, role: funding, priority: high, status: active,
+     url: "https://www.thesaasnews.com/feed", note: "Almost every item is a funding round."}
+  - {id: siliconangle, name: "SiliconANGLE", kind: rss, region: usa, role: funding, priority: high, status: active,
+     url: "https://siliconangle.com/feed/"}
+  - {id: tech_funding_news, name: "Tech Funding News", kind: rss, region: global, role: funding, priority: high, status: active,
+     url: "https://techfundingnews.com/feed/"}
+  - {id: alleywatch, name: "AlleyWatch (NYC funding)", kind: rss, region: usa, role: funding, priority: high, status: active,
+     url: "https://www.alleywatch.com/feed/"}
+  - {id: pulse2, name: "Pulse 2.0", kind: rss, region: usa, role: funding, priority: normal, status: active,
+     url: "https://pulse2.com/feed/"}
+  - {id: geekwire, name: "GeekWire", kind: rss, region: usa, role: funding, priority: normal, status: active,
+     url: "https://www.geekwire.com/feed/"}
+  - {id: business_insider, name: "Business Insider", kind: rss, region: usa, role: funding, priority: normal, status: spare,
+     url: "https://feeds.businessinsider.com/custom/all", note: "Mostly not funding news."}
+  - {id: axios, name: "Axios", kind: rss, region: usa, role: funding, priority: normal, status: spare,
+     url: "https://api.axios.com/feed/", note: "100 items/day, few are funding."}
+  - {id: betalist, name: "BetaList (new launches)", kind: rss, region: global, role: funding, priority: normal, status: spare,
+     url: "https://feeds.feedburner.com/BetaList", note: "New products, no funding info. Maybe later."}
+  - {id: hn_show, name: "Show HN (Algolia)", kind: api, region: global, role: funding, priority: normal, status: spare,
+     url: "https://hn.algolia.com/api/v1/search_by_date?tags=show_hn&hitsPerPage=50"}
+  - {id: venturebeat, name: "VentureBeat", kind: rss, region: usa, role: funding, priority: normal, status: flaky,
+     url: "https://venturebeat.com/feed/", note: "429 on 2026-11-19."}
+  - {id: finsmes, name: "FinSMEs", kind: rss, region: global, role: funding, priority: normal, status: dead,
+     url: "https://www.finsmes.com/feed", note: "403 blocked."}
+  - {id: pitchbook, name: "PitchBook News", kind: rss, region: usa, role: funding, priority: normal, status: dead,
+     url: "https://pitchbook.com/news/rss", note: "403 blocked."}
+  - {id: fortune_term_sheet, name: "Fortune Term Sheet", kind: rss, region: usa, role: funding, priority: normal, status: dead,
+     url: "https://fortune.com/section/term-sheet/feed/", note: "404."}
+
+  # ---------- Europe ----------
+  - {id: tech_eu, name: "Tech.eu", kind: rss, region: europe, role: funding, priority: normal, status: active,
+     url: "https://tech.eu/feed/"}
+  - {id: sifted, name: "Sifted", kind: rss, region: europe, role: funding, priority: normal, status: active,
+     url: "https://sifted.eu/feed"}
+  - {id: silicon_republic, name: "Silicon Republic", kind: rss, region: europe, role: funding, priority: normal, status: spare,
+     url: "https://www.siliconrepublic.com/feed"}
+  - {id: eu_startups, name: "EU-Startups", kind: rss, region: europe, role: funding, priority: normal, status: dead,
+     url: "https://www.eu-startups.com/feed/", note: "403 blocked."}
+
+  # ---------- India ----------
+  - {id: entrackr, name: "Entrackr", kind: rss, region: india, role: funding, priority: normal, status: active,
+     url: "https://entrackr.com/rss", note: "/feed/ is 404; /rss works."}
+  - {id: inc42, name: "Inc42", kind: rss, region: india, role: funding, priority: normal, status: active,
+     url: "https://inc42.com/feed/"}
+  - {id: yourstory, name: "YourStory", kind: rss, region: india, role: funding, priority: normal, status: active,
+     url: "https://yourstory.com/feed"}
+  - {id: et_tech_startups, name: "Economic Times Tech: Startups", kind: rss, region: india, role: funding, priority: normal, status: active,
+     url: "https://economictimes.indiatimes.com/tech/startups/rssfeeds/78570540.cms"}
+  - {id: vccircle, name: "VCCircle", kind: rss, region: india, role: funding, priority: normal, status: dead,
+     url: "https://www.vccircle.com/rss", note: "404."}
+
+  # ---------- Pakistan ----------
+  - {id: techjuice, name: "TechJuice", kind: rss, region: pakistan, role: funding, priority: normal, status: active,
+     url: "https://www.techjuice.pk/feed/"}
+  - {id: propakistani, name: "ProPakistani", kind: rss, region: pakistan, role: funding, priority: normal, status: active,
+     url: "https://propakistani.pk/feed/"}
+  - {id: business_recorder, name: "Business Recorder", kind: rss, region: pakistan, role: funding, priority: normal, status: active,
+     url: "https://www.brecorder.com/feeds/latest-news"}
+  - {id: dawn_business, name: "Dawn Business", kind: rss, region: pakistan, role: context, priority: normal, status: spare,
+     url: "https://www.dawn.com/feeds/business"}
+  - {id: profit_pk, name: "Profit (Pakistan Today)", kind: rss, region: pakistan, role: funding, priority: normal, status: dead,
+     url: "https://profit.pakistantoday.com.pk/feed/", note: "404 on every feed path."}
+
+  # ---------- Middle East ----------
+  - {id: wamda, name: "Wamda", kind: rss, region: mideast, role: funding, priority: normal, status: active,
+     url: "https://www.wamda.com/feed"}
+  - {id: fintechnews_ae, name: "Fintech News Middle East", kind: rss, region: mideast, role: funding, priority: normal, status: active,
+     url: "https://fintechnews.ae/feed/"}
+  - {id: fastcompany_me, name: "Fast Company Middle East", kind: rss, region: mideast, role: funding, priority: normal, status: active,
+     url: "https://fastcompanyme.com/feed/"}
+  - {id: fwdstart, name: "FWDStart", kind: rss, region: mideast, role: funding, priority: normal, status: dead,
+     url: "https://www.fwdstart.me/feed", note: "403 blocked."}
+  - {id: magnitt, name: "MAGNiTT", kind: rss, region: mideast, role: funding, priority: normal, status: dead,
+     url: "https://magnitt.com/news/rss", note: "403 blocked."}
+  - {id: gulf_business, name: "Gulf Business", kind: rss, region: mideast, role: funding, priority: normal, status: dead,
+     url: "https://gulfbusiness.com/feed/", note: "403 blocked."}
+  - {id: menabytes, name: "MENAbytes", kind: rss, region: mideast, role: funding, priority: normal, status: dead,
+     url: "https://www.menabytes.com/feed/", note: "No new posts for over a year."}
+
+  # ---------- Africa ----------
+  - {id: techcabal, name: "TechCabal", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://techcabal.com/feed/"}
+  - {id: disrupt_africa, name: "Disrupt Africa", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://disruptafrica.com/feed/"}
+  - {id: techafrica_news, name: "TechAfrica News", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://techafricanews.com/feed/"}
+  - {id: technext, name: "Technext", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://technext24.com/feed/"}
+  - {id: techtrends_ke, name: "TechTrends Kenya", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://techtrendske.co.ke/feed/"}
+  - {id: techloy, name: "Techloy", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://www.techloy.com/rss/"}
+  - {id: ventureburn, name: "Ventureburn", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://ventureburn.com/feed/"}
+  - {id: weetracker, name: "WeeTracker", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://weetracker.com/feed/"}
+  - {id: benjamindada, name: "Benjamindada", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://www.benjamindada.com/rss/"}
+  - {id: launch_base_africa, name: "Launch Base Africa", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://launchbaseafrica.com/feed/"}
+  - {id: the_big_deal, name: "The Big Deal (Africa funding data)", kind: rss, region: africa, role: funding, priority: normal, status: active,
+     url: "https://thebigdeal.substack.com/feed"}
+  - {id: techpoint_africa, name: "Techpoint Africa", kind: rss, region: africa, role: funding, priority: normal, status: dead,
+     url: "https://techpoint.africa/feed/", note: "403 blocked."}
+
+  # ---------- Southeast Asia ----------
+  - {id: e27, name: "e27", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://e27.co/index_wp.php/feed/"}
+  - {id: fintechnews_sg, name: "Fintech News Singapore", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://fintechnews.sg/feed/"}
+  - {id: fintechnews_my, name: "Fintech News Malaysia", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://fintechnews.my/feed/"}
+  - {id: fintechnews_ph, name: "Fintech News Philippines", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://fintechnews.ph/feed/"}
+  - {id: tech_collective_sea, name: "Tech Collective SEA", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://techcollectivesea.com/feed/"}
+  - {id: dailysocial, name: "DailySocial (Indonesia)", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://dailysocial.id/feed"}
+  - {id: vulcan_post, name: "Vulcan Post", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://vulcanpost.com/feed/"}
+  - {id: digital_news_asia, name: "Digital News Asia", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://www.digitalnewsasia.com/rss.xml"}
+  - {id: techsauce, name: "Techsauce (Thailand)", kind: rss, region: sea, role: funding, priority: normal, status: active,
+     url: "https://techsauce.co/en/feed"}
+  - {id: vnexpress_business, name: "VnExpress Business", kind: rss, region: sea, role: context, priority: normal, status: spare,
+     url: "https://e.vnexpress.net/rss/business.rss"}
+  - {id: dealstreetasia, name: "DealStreetAsia", kind: rss, region: sea, role: funding, priority: normal, status: dead,
+     url: "https://www.dealstreetasia.com/feed/", note: "503 twice (bot protection). Not bypassing."}
+  - {id: techinasia, name: "Tech in Asia", kind: rss, region: sea, role: funding, priority: normal, status: dead,
+     url: "https://www.techinasia.com/feed", note: "403 blocked."}
+  - {id: krasia, name: "KrASIA", kind: rss, region: sea, role: funding, priority: normal, status: dead,
+     url: "https://kr-asia.com/feed", note: "404."}
+
+  # ---------- China ----------
+  - {id: technode, name: "TechNode", kind: rss, region: china, role: funding, priority: normal, status: active,
+     url: "https://technode.com/feed/", note: "Big feed (whole archive); only items from the last 36h are kept."}
+  - {id: pandaily, name: "Pandaily", kind: rss, region: china, role: funding, priority: normal, status: active,
+     url: "https://pandaily.com/feed/"}
+  - {id: kr36, name: "36Kr (Chinese)", kind: rss, region: china, role: funding, priority: normal, status: active, lang: zh,
+     url: "https://www.36kr.com/feed", note: "Chinese language; translated to English during extraction."}
+  - {id: scmp_tech, name: "SCMP Tech", kind: rss, region: china, role: funding, priority: normal, status: active,
+     url: "https://www.scmp.com/rss/36/feed", note: "Headlines and summaries only; articles are paywalled, we never fetch them."}
+
+  # ---------- Bangladesh (context and competitor checks) ----------
+  - {id: future_startup, name: "Future Startup", kind: rss, region: bangladesh, role: funding, priority: normal, status: active,
+     url: "https://futurestartup.com/feed/"}
+  - {id: daily_star_tech_startup, name: "The Daily Star: Tech & Startup", kind: rss, region: bangladesh, role: funding, priority: normal, status: active,
+     url: "https://www.thedailystar.net/tech-startup/rss.xml"}
+  - {id: daily_star_business, name: "The Daily Star: Business", kind: rss, region: bangladesh, role: context, priority: normal, status: active,
+     url: "https://www.thedailystar.net/business/rss.xml"}
+  - {id: tbs_tech, name: "The Business Standard: Tech", kind: rss, region: bangladesh, role: funding, priority: normal, status: active,
+     url: "https://www.tbsnews.net/tech/rss.xml"}
+  - {id: tbs_economy, name: "The Business Standard: Economy", kind: rss, region: bangladesh, role: context, priority: normal, status: active,
+     url: "https://www.tbsnews.net/economy/rss.xml"}
+
+  # ---------- Emerging-market context ----------
+  - {id: rest_of_world, name: "Rest of World", kind: rss, region: global, role: context, priority: normal, status: active,
+     url: "https://restofworld.org/feed/latest"}
+
+  # ---------- Worldwide catch-all: Google News RSS searches (English results) ----------
+  # Links are news.google.com redirects that open the original article. Headlines only.
+  - {id: gnews_usa, name: "Google News: US startup rounds", kind: gnews, region: usa, role: funding, priority: high, status: active,
+     url: 'startup raises ("seed round" OR "series a" OR "pre-seed") when:1d'}
+  - {id: gnews_yc, name: "Google News: Y Combinator startups", kind: gnews, region: usa, role: funding, priority: high, status: active,
+     url: '"Y Combinator" startup raises when:1d'}
+  - {id: gnews_india, name: "Google News: India", kind: gnews, region: india, role: funding, priority: normal, status: active,
+     url: 'startup India (raises OR funding OR "seed round") when:1d'}
+  - {id: gnews_pakistan, name: "Google News: Pakistan", kind: gnews, region: pakistan, role: funding, priority: normal, status: active,
+     url: 'startup Pakistan (raises OR funding OR investment) when:1d'}
+  - {id: gnews_mideast, name: "Google News: Middle East", kind: gnews, region: mideast, role: funding, priority: normal, status: active,
+     url: 'startup (UAE OR Saudi OR Egypt OR Qatar OR Jordan) (raises OR funding OR "seed round") when:1d'}
+  - {id: gnews_africa, name: "Google News: Africa", kind: gnews, region: africa, role: funding, priority: normal, status: active,
+     url: 'startup (Nigeria OR Kenya OR Ghana OR "South Africa" OR Rwanda OR Morocco) (raises OR funding) when:1d'}
+  - {id: gnews_sea, name: "Google News: Southeast Asia", kind: gnews, region: sea, role: funding, priority: normal, status: active,
+     url: 'startup (Indonesia OR Vietnam OR Philippines OR Malaysia OR Singapore OR Thailand) (raises OR funding) when:1d'}
+  - {id: gnews_china, name: "Google News: China", kind: gnews, region: china, role: funding, priority: normal, status: active,
+     url: 'Chinese startup (raises OR funding OR "series a" OR "angel round") when:1d'}
+  - {id: gnews_bangladesh, name: "Google News: Bangladesh", kind: gnews, region: bangladesh, role: funding, priority: normal, status: active,
+     url: 'Bangladesh startup (raises OR funding OR investment) when:1d'}
+
+  # ---------- GDELT (worldwide news API, 65 languages) ----------
+  - {id: gdelt, name: "GDELT DOC API", kind: gdelt, region: global, role: funding, priority: normal, status: flaky,
+     url: "https://api.gdeltproject.org/api/v2/doc/doc",
+     note: "429 'one request every 5 seconds' even on the first call from the owner's Mac, 2026-11-19. Retry from Modal in Phase 1."}

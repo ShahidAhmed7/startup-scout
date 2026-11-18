@@ -1,0 +1,11 @@
+modal==1.6.2
+psycopg[binary]==3.3.9
+pyyaml==6.0.3
+python-dotenv==1.2.4
+httpx==0.28.1
+feedparser==6.0.14
+trafilatura==2.3.1
+ddgs==9.16.1
+fastapi==0.165.0
+pytest==9.2.0
+tzdata==2026.1
