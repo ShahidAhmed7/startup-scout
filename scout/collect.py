@@ -181,7 +181,58 @@ def fetch_yc(client, limiter, src, since, state, conn=None) -> FetchResult:
     return FetchResult(items)
 
 
-FETCHERS = {"rss": fetch_rss, "gnews": fetch_gnews}
+TRUSTMRR_MAX_PER_DAY = 20
+TRUSTMRR_MIN_30D_USD = 300  # keep only startups with real traction
+
+
+def _md_field(text: str, label: str) -> str:
+    import re
+    m = re.search(rf"^- {re.escape(label)}: (.+)$", text, re.M)
+    return m.group(1).strip() if m else ""
+
+
+def _usd(s: str) -> float:
+    import re
+    m = re.search(r"\$([\d,]+(?:\.\d+)?)\s*([kKmM]?)", s or "")
+    if not m:
+        return 0.0
+    v = float(m.group(1).replace(",", ""))
+    return v * {"k": 1e3, "m": 1e6}.get(m.group(2).lower(), 1)
+
+
+def fetch_trustmrr(client, limiter, src, since, state, conn=None) -> FetchResult:
+    """New startups on TrustMRR's 'recently added' page, read from their public .md profiles."""
+    import re
+
+    limiter.wait(src["url"])
+    page = client.get(src["url"])
+    page.raise_for_status()
+    slugs = list(dict.fromkeys(re.findall(r"/startup/([a-z0-9][a-z0-9\-]*)", page.text)))
+    seen = {r["key"] for r in conn.execute("select key from lane_seen where lane = 'trustmrr'").fetchall()}
+    items = []
+    for slug in [s for s in slugs if s not in seen][:TRUSTMRR_MAX_PER_DAY]:
+        conn.execute("insert into lane_seen (lane, key) values ('trustmrr', %s) on conflict do nothing", (slug,))
+        url = f"https://trustmrr.com/startup/{slug}.md"
+        limiter.wait(url)
+        r = client.get(url)
+        if r.status_code != 200:
+            continue
+        md = r.text
+        rev30 = _usd(_md_field(md, "Last 30 days revenue snapshot"))
+        if rev30 < TRUSTMRR_MIN_30D_USD:
+            continue
+        name = _md_field(md, "Name") or slug
+        website = re.sub(r"^\[([^\]]+)\].*$", r"\1", _md_field(md, "Website"))
+        desc = _md_field(md, "Description")
+        items.append(RawItem(
+            src["id"], f"https://trustmrr.com/startup/{slug}", clean_text(f"{name}: {desc}", 400),
+            clean_text(f"{desc} Verified revenue last 30 days: ${rev30:,.0f}.", 2000), datetime.now(timezone.utc),
+            kind="trustmrr", raw={"name": name, "website": website, "description": desc, "rev30": rev30,
+                                  "country": _md_field(md, "Country"), "founded": _md_field(md, "Founded date")}))
+    return FetchResult(items)
+
+
+FETCHERS = {"rss": fetch_rss, "gnews": fetch_gnews, "trustmrr": fetch_trustmrr}
 
 
 def _fetcher(src):
@@ -228,7 +279,7 @@ def collect(conn, lookback_hours: float | None = None, only: list[str] | None = 
         def one(src):
             try:
                 fn = _fetcher(src)
-                kwargs = {"conn": conn} if fn is fetch_yc else {}
+                kwargs = {"conn": conn} if fn in (fetch_yc, fetch_trustmrr) else {}
                 res = fn(client, limiter, src, since, state.get(src["id"], {}), **kwargs)
                 with lock:
                     n_new = store_items(conn, res.items)

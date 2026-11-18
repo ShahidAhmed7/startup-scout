@@ -253,3 +253,27 @@ end $$;
 -- ---------- source health ----------
 alter table sources add column if not exists first_seen_at timestamptz not null default now();
 alter table sources add column if not exists notified_at timestamptz;   -- when the owner was told it is down
+
+-- ---------- phase 5 ----------
+create table if not exists lane_seen (
+  lane          text not null,
+  key           text not null,
+  first_seen_at timestamptz not null default now(),
+  primary key (lane, key)
+);
+create extension if not exists vector with schema extensions;
+alter table startups add column if not exists embedding extensions.vector(768);
+alter table ideas    add column if not exists competitor_urls jsonb not null default '[]';
+alter table ideas    add column if not exists last_scores jsonb;
+alter table scores   add column if not exists taste numeric;
+
+do $$
+declare t text;
+begin
+  for t in select tablename from pg_tables where schemaname = 'scout' loop
+    execute format('alter table scout.%I enable row level security', t);
+  end loop;
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'revoke all on all tables in schema scout from anon, authenticated';
+  end if;
+end $$;

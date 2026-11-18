@@ -214,6 +214,17 @@ sources:
   - {id: gnews_bangladesh, name: "Google News: Bangladesh", kind: gnews, region: bangladesh, role: funding, priority: normal, status: active,
      url: 'Bangladesh startup (raises OR funding OR investment) when:1d'}
 
+  # ---------- Global track extras (phase 5) ----------
+  - {id: trustmrr, name: "TrustMRR (verified revenue)", kind: trustmrr, region: global, role: funding, priority: normal, status: active,
+     url: "https://trustmrr.com/recent",
+     note: "Recently added startups with payment-provider-verified revenue. robots.txt allows all; we read public .md pages, max 20/day."}
+  - {id: reddit_saas, name: "Reddit r/SaaS complaints", kind: rss, region: global, role: context, priority: normal, status: dead,
+     url: "https://www.reddit.com/r/SaaS/new/.rss",
+     note: "Reddit returns 404/429/empty feeds to unauthenticated readers (2026-11-19). Needs a free Reddit app registered by the owner."}
+  - {id: reddit_smallbusiness, name: "Reddit r/smallbusiness complaints", kind: rss, region: global, role: context, priority: normal, status: dead,
+     url: "https://www.reddit.com/r/smallbusiness/new/.rss",
+     note: "Same as r/SaaS: blocked without OAuth."}
+
   # ---------- GDELT (worldwide news API, 65 languages) ----------
   - {id: gdelt, name: "GDELT DOC API", kind: gdelt, region: global, role: funding, priority: normal, status: flaky,
      url: "https://api.gdeltproject.org/api/v2/doc/doc",

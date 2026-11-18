@@ -268,3 +268,103 @@ Fields (plain English, short, digits for numbers):
 - risks: 3 short risks.
 - first_7_days: a numbered 7-day plan, one line per day.
 - source_urls: URLs from the search results you relied on."""
+
+
+# ---------------------------------------------------------------- validation kit (Hydrogen; Qwen if notes)
+
+KIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "interview": {"type": "array", "items": {
+            "type": "object", "properties": {"bangla": {"type": "string"}, "english": {"type": "string"}},
+            "required": ["bangla", "english"]}},
+        "headline": {"type": "string"},
+        "subhead": {"type": "string"},
+        "call_to_action": {"type": "string"},
+        "prices": {"type": "string"},
+        "plan_7_days": {"type": "string"},
+    },
+    "required": ["interview", "headline", "subhead", "call_to_action", "prices", "plan_7_days"],
+}
+
+
+def kit_prompt(card: str, notes: str, market: str, shorter: bool, all_bangla: bool) -> str:
+    style = []
+    if shorter:
+        style.append("Make everything much shorter: 3 interview questions, a 4-word headline, a 3-day plan.")
+    if all_bangla:
+        style.append("Write EVERY field in Bangla (Bengali script), including the plan; english glosses may stay.")
+    return f"""Build a validation kit so a 2-3 person team can test this idea with real customers this week.
+
+THE IDEA (card):
+{card}
+
+THE OWNER'S PRIVATE NOTES (may be empty):
+{notes or '(none)'}
+
+Market: {market}. {' '.join(style)}
+Fields:
+- interview: 5 questions to ask potential customers, in natural spoken Bangla, each with an English gloss.
+  Ask about past behaviour and real spending, not opinions about the idea.
+- headline, subhead, call_to_action: landing-page copy{' in Bangla' if market == 'Bangladesh' else ''}.
+- prices: 2-3 price points to test, in taka (৳) for Bangladesh{' and US dollars for the global version' if market != 'Bangladesh' else ''}, marked "to test".
+- plan_7_days: a numbered 7-day plan, one line per day, with a number that counts as a yes.
+Use only the idea and notes above; no invented market facts."""
+
+
+# ---------------------------------------------------------------- ask (Hydrogen; Qwen if private notes)
+
+ASK_SCHEMA = {
+    "type": "object",
+    "properties": {"on_topic": {"type": "boolean"}, "answer": {"type": "string"}},
+    "required": ["on_topic", "answer"],
+}
+
+
+def ask_prompt(question: str, context: str) -> str:
+    return f"""The owner asked a question. You may ONLY answer questions about the startup card / saved idea below
+(the idea, its market, how to build or test it, its competitors and risks). If the question is about anything
+else (general knowledge, coding help, chit-chat, other topics), set on_topic to false and answer "".
+
+CONTEXT:
+{context}
+
+QUESTION: {question}
+
+Answer in at most 120 words, plain English, using only the context plus general reasoning about building and
+testing the idea. If a fact is not in the context, say it is unknown."""
+
+
+# ---------------------------------------------------------------- assumptions from private notes (Qwen only)
+
+ASSUMPTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {"assumptions": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"text": {"type": "string"},
+                       "status": {"type": "string", "enum": ["holding", "at_risk", "untested"]},
+                       "evidence_for": {"type": "integer"}, "evidence_against": {"type": "integer"}},
+        "required": ["text", "status", "evidence_for", "evidence_against"]}},
+        "summary": {"type": "string"}},
+    "required": ["assumptions", "summary"],
+}
+
+
+def assumptions_prompt(card: str, notes: list[str], current: list[dict]) -> str:
+    cur = "\n".join(f"- {a['text']} [{a['status']}, +{a['evidence_for']}/-{a['evidence_against']}]" for a in current)
+    nts = "\n".join(f"- {n}" for n in notes)
+    return f"""Track the key assumptions behind this startup idea using the owner's private notes from customer tests.
+
+THE IDEA (card):
+{card[:2500]}
+
+CURRENT ASSUMPTIONS:
+{cur or '(none yet: create 4-6, e.g. "Clinic owners will pay ৳1,000 a month")'}
+
+ALL NOTES (oldest first):
+{nts}
+
+Return the full updated list (keep wording stable; add new ones only if the notes raise them). For each:
+status = holding (evidence supports it), at_risk (evidence against it), untested (no evidence yet);
+evidence_for / evidence_against = how many notes support / contradict it.
+summary: 1-2 sentences on what changed with the latest note."""

@@ -143,7 +143,8 @@ def card_text(f: dict, data: dict, model_id: str, today: date, new_round: bool =
     return clip(text, LIMITS["text"])
 
 
-def write_cards(conn, picks: list[tuple[dict, str]], run_date: date, new_round_ids: set[int]) -> dict:
+def write_cards(conn, picks: list[tuple[dict, str]], run_date: date, new_round_ids: set[int],
+                job: str = "card") -> dict:
     """picks: [(shortlist row, market)]. Returns {card_ids, failed, models}."""
     prepared = []
     for row, market in picks:
@@ -151,7 +152,7 @@ def write_cards(conn, picks: list[tuple[dict, str]], run_date: date, new_round_i
         res = research(conn, f)
         p, allowed, search_urls = card_prompt_for(f, res, market)
         prepared.append((row, market, f, res, p, allowed, search_urls))
-    outs = router.complete_many("card", [x[4] for x in prepared], schema=prompts.CARD_SCHEMA,
+    outs = router.complete_many(job, [x[4] for x in prepared], schema=prompts.CARD_SCHEMA,
                                 system=prompts.SYSTEM, conn=conn)
     card_ids, failed, models = [], [], []
     for (row, market, f, res, _, allowed, search_urls), out in zip(prepared, outs):

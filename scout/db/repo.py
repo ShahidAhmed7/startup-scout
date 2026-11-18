@@ -14,7 +14,7 @@ SCHEMA = "scout"
 TABLES = [
     "sources", "items", "startups", "rounds", "scores", "skipped", "cards", "digests",
     "messages", "owner_state", "settings", "ideas", "notes", "assumptions", "watches",
-    "signals", "usage", "runs", "yc_seen", "startup_items", "search_cache",
+    "signals", "usage", "runs", "yc_seen", "startup_items", "search_cache", "lane_seen",
 ]
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
@@ -30,7 +30,7 @@ def connect(autocommit: bool = True) -> psycopg.Connection:
         connect_timeout=15,
         application_name="startup-scout",
     )
-    conn.execute(f"set search_path to {SCHEMA}, public")
+    conn.execute(f"set search_path to {SCHEMA}, public, extensions")
     return conn
 
 

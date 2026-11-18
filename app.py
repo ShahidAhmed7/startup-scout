@@ -103,6 +103,90 @@ def web():
     return create_app(spawn=lambda wamid: handle_message.spawn(wamid), connect=repo.connect)
 
 
+# ---------------------------------------------------------------- Qwen backup / private model (phase 3)
+
+QWEN_REPO = "Qwen/Qwen3.6-27B-FP8"   # Apache 2.0; FP8 fits one A100 80GB (weight-only FP8 via Marlin on Ampere)
+QWEN_DIR = "/models/Qwen3.6-27B-FP8"
+weights = modal.Volume.from_name("scout-qwen-weights", create_if_missing=True)
+
+download_image = modal.Image.debian_slim(python_version="3.12").pip_install("huggingface_hub==2.3.0")
+qwen_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install("vllm==0.33.0", "httpx==0.28.1")
+    .env({"VLLM_LOGGING_LEVEL": "WARNING", "HF_HUB_OFFLINE": "1"})
+)
+
+
+@app.function(image=download_image, volumes={"/models": weights}, secrets=secrets, timeout=3600, cpu=2)
+def download_qwen() -> dict:
+    """Download the weights once into the Volume (CPU only, so no GPU time is spent on downloading)."""
+    import os
+
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(QWEN_REPO, local_dir=QWEN_DIR, token=os.environ.get("HF_TOKEN") or None)
+    weights.commit()
+    size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(QWEN_DIR) for f in fs)
+    return {"repo": QWEN_REPO, "gb": round(size / 1e9, 1)}
+
+
+@app.cls(image=qwen_image, gpu="A100-80GB", volumes={"/models": weights}, timeout=1800, scaledown_window=120,
+         max_containers=1)
+class Qwen:
+    @modal.enter()
+    def start(self):
+        import subprocess
+        import time
+
+        import httpx
+
+        self.proc = subprocess.Popen([
+            "vllm", "serve", QWEN_DIR, "--served-model-name", "qwen", "--port", "8000",
+            "--max-model-len", "65536", "--gpu-memory-utilization", "0.92",
+            "--reasoning-parser", "qwen3", "--enforce-eager"])
+        deadline = time.time() + 1200
+        while time.time() < deadline:
+            if self.proc.poll() is not None:
+                raise RuntimeError(f"vllm exited with code {self.proc.returncode}")
+            try:
+                if httpx.get("http://localhost:8000/health", timeout=5).status_code == 200:
+                    return
+            except httpx.HTTPError:
+                pass
+            time.sleep(3)
+        raise RuntimeError("vllm did not become healthy in time")
+
+    @modal.method()
+    def generate(self, requests: list[dict]) -> list[dict]:
+        from concurrent.futures import ThreadPoolExecutor
+
+        import httpx
+
+        def one(req: dict) -> dict:
+            body = {"model": "qwen", "max_tokens": 16384, "temperature": 0.6, "top_p": 0.95, "top_k": 20,
+                    "messages": ([{"role": "system", "content": req["system"]}] if req.get("system") else []) +
+                                [{"role": "user", "content": req["prompt"]}],
+                    "chat_template_kwargs": {"enable_thinking": True}}
+            if req.get("schema"):
+                body["response_format"] = {"type": "json_schema",
+                                           "json_schema": {"name": "output", "schema": req["schema"]}}
+            try:
+                r = httpx.post("http://localhost:8000/v1/chat/completions", json=body, timeout=1500)
+                r.raise_for_status()
+                j = r.json()
+                return {"text": j["choices"][0]["message"].get("content") or "",
+                        "tokens_in": j["usage"]["prompt_tokens"], "tokens_out": j["usage"]["completion_tokens"]}
+            except Exception as e:
+                return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            return list(ex.map(one, requests))
+
+    @modal.exit()
+    def stop(self):
+        self.proc.terminate()
+
+
 @app.local_entrypoint()
 def main():
     print(ping.remote())

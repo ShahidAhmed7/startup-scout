@@ -49,6 +49,15 @@ def extract(conn, limit: int | None = None) -> dict:
                                "what_they_do": raw.get("one_liner") or "", "yc_batch": raw.get("batch")}, "yc"))
             stats["yc"] += 1
             conn.execute("update items set extracted_at = now() where id = %s", (it["id"],))
+        elif it["kind"] == "trustmrr":
+            raw = it["raw_json"] or {}
+            facts.append((it, {"name": raw.get("name"), "website": raw.get("website") or "",
+                               "country": raw.get("country") or "", "stage": "Bootstrapped (TrustMRR)",
+                               "amount_text": f"${raw.get('rev30', 0):,.0f} verified revenue last 30 days",
+                               "amount_usd": 0, "investors": [], "what_they_do": raw.get("description") or ""},
+                          "trustmrr"))
+            stats["trustmrr"] = stats.get("trustmrr", 0) + 1
+            conn.execute("update items set extracted_at = now() where id = %s", (it["id"],))
         elif s.get("role") == "context":
             stats["context"] += 1
             conn.execute("update items set kind = 'context', extracted_at = now() where id = %s", (it["id"],))

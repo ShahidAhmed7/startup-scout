@@ -25,6 +25,8 @@ skip add crypto / skip remove space
 skills add mobile apps / skills remove mobile apps
 ask <question>: about your last card or a saved idea
 note <idea>: <text>: a private note (stays on our own model)
+idea <name>: an idea's assumptions and status
+drop <idea>: <reason>: drop an idea
 kit <idea>: validation kit
 watch <sector> <stage> <country> or watch <company>
 watches / unwatch <number>"""
@@ -251,7 +253,10 @@ def handle(conn, msg: dict) -> None:
         reply(conn, HELP)
         return
     if low in ("saved", "notebook"):
-        saved_list(conn)
+        from scout import notebook
+
+        if not notebook.saved_menu(conn):
+            saved_list(conn)  # empty notebook message
         return
     if low == "settings":
         settings_text(conn)

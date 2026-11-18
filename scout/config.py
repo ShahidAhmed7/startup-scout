@@ -26,7 +26,7 @@ REQUIRED_ENV = [
 ]
 OPTIONAL_ENV = ["HF_TOKEN"]
 
-SOURCE_KINDS = {"rss", "api", "gnews", "gdelt"}
+SOURCE_KINDS = {"rss", "api", "gnews", "gdelt", "trustmrr"}
 SOURCE_STATUSES = {"active", "spare", "flaky", "dead"}
 
 

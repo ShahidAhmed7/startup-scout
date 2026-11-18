@@ -34,6 +34,7 @@ jobs:
   deep_dive: hydrogen     # "More" button
   friday: hydrogen        # Friday report deep dive
   ask: hydrogen           # questions about public cards (private notes always go to Qwen)
+  kit: hydrogen           # validation kit from a public card (with private notes -> Qwen)
 
 # Model settings. IDs are pinned and stored on every card.
 # free_limits are per key (each key is its own Google account), as reported for the free tier on
