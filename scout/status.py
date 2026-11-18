@@ -35,7 +35,8 @@ def c_files():
     cfg = config()
     act = len(sources("active"))
     dead = len(sources("dead")) + len(sources("flaky"))
-    return True, f"config.yaml ok, {act} active sources ({dead} dead or flaky), models {cfg['models']['gemini_flash']} / {cfg['models']['gemini_flash_lite']}"
+    m = cfg["models"]
+    return True, f"{act} active sources ({dead} dead or flaky); cards {m['card']['id']}, scoring {m['flash_lite']['id']}, fallback {m['gemma']['id']}"
 
 
 def c_env():
@@ -59,7 +60,7 @@ def c_gemini_key(label):
         from scout.llm.gemini import check_key
         res = check_key(label)
         ok = all(v == "ok" for v in res.values())
-        return ok, "both models reachable" if ok else ", ".join(f"{k}: {v}" for k, v in res.items())
+        return ok, f"all {len(res)} models reachable" if ok else ", ".join(f"{k}: {v}" for k, v in res.items())
     return fn
 
 
@@ -72,10 +73,10 @@ def c_gemini_test():
                where provider = 'gemini' and kind = 'test' and status = 'ok' group by model_id"""
         ).fetchall()
     done = {r["model_id"] for r in rows}
-    need = {cfg["models"]["gemini_flash"], cfg["models"]["gemini_flash_lite"]}
+    need = {cfg["models"][a]["id"] for a in ("card", "flash_lite", "gemma")}
     if need <= done:
-        return True, "Flash and Flash-Lite test calls succeeded"
-    return False, "not done yet: run python -m scout.smoke gemini"
+        return True, "test calls succeeded on " + ", ".join(sorted(need))
+    return False, "still to pass: " + ", ".join(sorted(need - done)) + " (run python -m scout.smoke gemini)"
 
 
 def c_whatsapp_token():
@@ -141,12 +142,12 @@ def daily_report() -> None:
                 print(f"   Cards made             {s.get('cards', 'unknown')}")
             else:
                 print("   Last pipeline run      none yet (phase 1)")
-            caps = cfg["caps"]
-            for alias, cap in (("flash", caps["gemini_flash_per_day"]), ("flash_lite", caps["gemini_flash_lite_per_day"])):
-                mid = cfg["models"][f"gemini_{alias}"]
-                m = repo.gemini_calls_today(conn, mid, "main")
-                b = repo.gemini_calls_today(conn, mid, "backup")
-                print(f"   Gemini {alias:<10}      main {m}/{cap}, backup {b}/{cap} (Pacific day)")
+            for alias in ("card", "flash_lite", "gemma"):
+                mc = cfg["models"][alias]
+                cap = mc["cap_per_day"]
+                m = repo.gemini_calls_today(conn, mc["id"], "main")
+                b = repo.gemini_calls_today(conn, mc["id"], "backup")
+                print(f"   {mc['id']:<22} main {m}/{cap}, backup {b}/{cap} today (Pacific day)")
             gpu = repo.gpu_seconds_this_month(conn)
             b = cfg["budget"]
             spend = gpu * b["a100_80gb_usd_per_second"] + b["cpu_allowance_usd_per_month"]

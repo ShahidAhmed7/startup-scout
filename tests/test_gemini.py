@@ -76,7 +76,7 @@ def test_both_keys_fail_raises_unavailable():
         "backup-key": [httpx.Response(503, json={}), httpx.Response(503, json={})],
     })
     with pytest.raises(gemini.GeminiUnavailable) as e:
-        gemini.generate("flash", "x", kind="test", http=http)
+        gemini.generate("card", "x", kind="test", http=http)
     assert [label for label, _ in e.value.errors] == ["main", "backup"]
     assert [err.kind for _, err in e.value.errors] == ["quota", "server"]
 
@@ -111,13 +111,13 @@ def test_thought_parts_are_ignored():
     resp = httpx.Response(200, json={"candidates": [{"content": {"parts": [
         {"text": "thinking...", "thought": True}, {"text": "answer"}]}, "finishReason": "STOP"}]})
     http, _ = mock({"main-key": [resp]})
-    assert gemini.generate("flash", "x", kind="test", http=http).text == "answer"
+    assert gemini.generate("card", "x", kind="test", http=http).text == "answer"
 
 
 def test_missing_main_key_goes_straight_to_backup(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY_MAIN")
     http, calls = mock({"backup-key": [ok_response("hi")]})
-    assert gemini.generate("flash", "x", kind="test", http=http).key_label == "backup"
+    assert gemini.generate("card", "x", kind="test", http=http).key_label == "backup"
     assert calls == ["backup-key"]
 
 
@@ -141,9 +141,55 @@ def test_calls_use_owner_defaults_high_thinking_and_big_output():
         return ok_response({"ok": True})
 
     http = httpx.Client(transport=httpx.MockTransport(handler))
-    gemini.generate("flash", "x", kind="test", schema=SCHEMA, http=http)
+    gemini.generate("card", "x", kind="test", schema=SCHEMA, http=http)
     gen = sent["generationConfig"]
     assert gen["thinkingConfig"] == {"thinkingLevel": "high"}
     assert gen["maxOutputTokens"] == 65536
     assert "temperature" not in gen  # model default, as Google advises for Gemini 3
     assert gen["responseMimeType"] == "application/json" and gen["responseJsonSchema"] == SCHEMA
+
+
+def test_chain_card_falls_back_to_flash_lite_then_gemma():
+    """Owner's order: Hydrogen (both keys) -> Flash-Lite (both keys) -> Gemma -> (Qwen, phase 3)."""
+    seen = []
+
+    def handler(request: httpx.Request):
+        model = request.url.path.split("/models/")[1].split(":")[0]
+        seen.append((model, request.headers["x-goog-api-key"]))
+        if model == "gemma-4-31b-it":
+            return ok_response({"ok": True})
+        return httpx.Response(429, json={})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    r = gemini.generate_chain("card", "x", kind="card", schema=SCHEMA, http=http)
+    assert r.model_id == "gemma-4-31b-it" and r.key_label == "main"
+    assert seen == [
+        ("gemini-4-hydrogen", "main-key"), ("gemini-4-hydrogen", "backup-key"),
+        ("gemini-3.5-flash-lite", "main-key"), ("gemini-3.5-flash-lite", "backup-key"),
+        ("gemma-4-31b-it", "main-key"),
+    ]
+
+
+def test_chain_stops_at_first_success():
+    http, calls = mock({"main-key": [ok_response({"ok": True})]})
+    r = gemini.generate_chain("card", "x", kind="card", schema=SCHEMA, http=http)
+    assert r.model_id == "gemini-4-hydrogen" and calls == ["main-key"]
+
+
+def test_chain_all_fail_lists_every_error_for_qwen_router():
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(429, json={})))
+    with pytest.raises(gemini.GeminiUnavailable) as e:
+        gemini.generate_chain("card", "x", kind="card", http=http)
+    assert [label for label, _ in e.value.errors] == [
+        "card/main", "card/backup", "flash_lite/main", "flash_lite/backup", "gemma/main", "gemma/backup"]
+
+
+def test_gemma_output_limit_is_respected():
+    sent = {}
+
+    def handler(request):
+        sent.update(json.loads(request.content))
+        return ok_response("hi")
+
+    gemini.generate("gemma", "x", kind="test", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert sent["generationConfig"]["maxOutputTokens"] == 32768

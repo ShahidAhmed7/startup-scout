@@ -1,8 +1,10 @@
-"""Gemini REST client.
+"""Gemini API client (Gemini 4 Hydrogen, Flash-Lite, Gemma 4 — all on the free tier).
 
 Hard rule 4: always try GEMINI_API_KEY_MAIN first; switch to GEMINI_API_KEY_BACKUP only when
-the main key fails (error, quota/limit, our own cap, revoked key). If both fail, raise
-GeminiUnavailable so the router (phase 3) can fall back to Qwen on Modal.
+the main key fails (error, quota/limit, our own cap, revoked key).
+Owner's fallback order (2026-11-19): if a model fails on both keys, generate_chain() tries the
+next free model from config.yaml `fallback`; only when all fail does the router (phase 3) use
+Qwen on Modal.
 
 Hard rule 5: only public data may be sent here. Private notes go to Qwen only.
 """
@@ -62,8 +64,15 @@ def classify(status: int, body: str) -> str:
     return "bad_request"
 
 
+GOOGLE_ALIASES = ("card", "flash_lite", "gemma")  # models served by the Gemini API
+
+
+def model_cfg(alias: str) -> dict:
+    return config()["models"][alias]
+
+
 def model_id_for(alias: str) -> str:
-    return config()["models"][f"gemini_{alias}"]
+    return model_cfg(alias)["id"]
 
 
 # ---------- per-minute spacing (stay under the free tier's requests/minute) ----------
@@ -73,7 +82,7 @@ _lock = threading.Lock()
 
 
 def _throttle(key_label: str, alias: str) -> None:
-    rpm = config()["gemini_limits"][alias]["rpm"]
+    rpm = model_cfg(alias)["free_limits"]["rpm"]
     gap = 60.0 / rpm + 0.5
     with _lock:
         last = _last_call.get((key_label, alias), 0.0)
@@ -145,7 +154,7 @@ def generate(alias: str, prompt: str, *, kind: str, schema: dict | None = None, 
              validate: Callable[[object], None] | None = None, temperature: float | None = None,
              thinking_level: str | None = None, max_output_tokens: int | None = None,
              conn=None, only_key: str | None = None, http: httpx.Client | None = None) -> Result:
-    """Call Gemini `alias` ("flash" or "flash_lite"): main key, then backup key.
+    """Call one model (`alias` from config.yaml models: "card", "flash_lite", "gemma"): main key, then backup key.
 
     - schema: JSON schema for structured output; the reply is parsed into Result.data.
     - validate: extra check on Result.data; raise ValueError to reject. Bad output is retried once
@@ -156,12 +165,13 @@ def generate(alias: str, prompt: str, *, kind: str, schema: dict | None = None, 
     from scout.db import repo  # local import keeps tests free of a database
 
     llm = config()["llm"]
+    mcfg = model_cfg(alias)
     thinking_level = thinking_level or llm["thinking_level"]
-    max_output_tokens = max_output_tokens or llm["max_output_tokens"]
+    max_output_tokens = min(max_output_tokens or llm["max_output_tokens"], mcfg["max_output_tokens"])
     temperature = temperature if temperature is not None else llm.get("temperature")
     timeout = float(llm["request_timeout_seconds"])
-    model_id = model_id_for(alias)
-    cap = config()["caps"][f"gemini_{alias}_per_day"]
+    model_id = mcfg["id"]
+    cap = mcfg["cap_per_day"]
     own_http = http is None
     http = http or httpx.Client()
     errors: list[tuple[str, GeminiError]] = []
@@ -214,15 +224,30 @@ def generate(alias: str, prompt: str, *, kind: str, schema: dict | None = None, 
             http.close()
 
 
+def generate_chain(alias: str, prompt: str, **kwargs) -> Result:
+    """Try `alias`, then each model in config.yaml `fallback[alias]` (all free).
+
+    Raises GeminiUnavailable (with every error) when all of them fail; the router then uses
+    Qwen on Modal (phase 3). The model that answered is in Result.model_id: store it on the card.
+    """
+    errors: list[tuple[str, GeminiError]] = []
+    for a in [alias, *config()["fallback"].get(alias, [])]:
+        try:
+            return generate(a, prompt, **kwargs)
+        except GeminiUnavailable as e:
+            errors += [(f"{a}/{label}", err) for label, err in e.errors]
+    raise GeminiUnavailable(errors)
+
+
 def check_key(key_label: str, http: httpx.Client | None = None) -> dict[str, str]:
-    """Free check (no quota used): can this key see our two models? Returns {alias: 'ok' | error}."""
+    """Free check (no quota used): can this key see our models? Returns {alias: 'ok' | error}."""
     env_name = dict(KEYS)[key_label]
     key = env(env_name)
     if not key:
-        return {"flash": "no key", "flash_lite": "no key"}
+        return {a: "no key" for a in GOOGLE_ALIASES}
     out = {}
     with (http or httpx.Client()) as c:
-        for alias in ("flash", "flash_lite"):
+        for alias in GOOGLE_ALIASES:
             r = c.get(f"{BASE_URL}/models/{model_id_for(alias)}", headers={"x-goog-api-key": key}, timeout=20)
             out[alias] = "ok" if r.status_code == 200 else f"HTTP {r.status_code} ({classify(r.status_code, r.text)})"
     return out

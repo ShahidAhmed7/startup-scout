@@ -23,29 +23,44 @@ skip_list:
 ai_angle: {show: true, boost: 0.5}
 weights: {pain: 1.0, why_now: 0.8, feasibility: 1.0, fits_you: 0.7}
 
+# Which model does which job (owner's choices, 2026-11-19). IDs are pinned and stored on every card.
+# free_limits are per key (each key is its own Google account), as reported for the free tier on
+# 2026-11-19. OWNER: confirm at aistudio.google.com/rate-limit, signed in with each account.
 models:
-  gemini_flash: gemini-3.8-flash            # verified in both keys' model lists, 2026-11-19
-  gemini_flash_lite: gemini-3.5-flash-lite  # verified in both keys' model lists, 2026-11-19
-  qwen: Qwen/Qwen3.6-27B-FP8                # verified on Hugging Face 2026-11-19 (Apache 2.0, public); FP8 fits one A100 80GB
+  card:                           # writes cards, deep dives, Friday deep dive
+    id: gemini-4-hydrogen
+    free_limits: {rpm: 5, tpm: 250000, rpd: 20}
+    cap_per_day: 12               # our own cap per key, below the free limit
+    max_output_tokens: 65536
+  flash_lite:                     # extraction, screening, scoring, ask
+    id: gemini-3.5-flash-lite
+    free_limits: {rpm: 15, tpm: 250000, rpd: 500}
+    cap_per_day: 150
+    max_output_tokens: 65536
+  gemma:                          # free fallback: Google's open model, served by the Gemini API
+    id: gemma-4-31b-it
+    free_limits: {rpm: 15, tpm: null, rpd: 1500}
+    cap_per_day: 300
+    max_output_tokens: 32768
+  qwen:                           # last resort, and the ONLY model that ever sees private notes
+    id: Qwen/Qwen3.6-27B-FP8      # runs on Modal's A100 80GB, costs credits
+  # Not used: gemini-3.8-flash (20/day free, overloaded on the free tier on 2026-11-19).
 
-# How every Gemini call runs (owner's choice: big limits, think hard).
+# When a model fails on both keys (busy, limit, error), try the next one. All free.
+# Qwen on Modal comes after the last one (phase 3).
+fallback:
+  card: [flash_lite, gemma]
+  flash_lite: [gemma]
+  gemma: []
+
+# How every Gemini/Gemma call runs (owner's choice: big limits, think hard).
 llm:
-  thinking_level: high            # minimal | low | medium | high
-  max_output_tokens: 65536        # model maximum for both models (checked via the API, 2026-11-19)
-  max_input_tokens: 1048576       # context window for both models; prompts are built to fit inside this
+  thinking_level: high            # low | medium | high (Hydrogen also has xhigh)
+  max_output_tokens: 65536        # capped per model by models.<job>.max_output_tokens
+  max_input_tokens: 240000        # per request. Models read up to 1M tokens, but the free tier
+                                  # allows 250,000 input tokens per minute per key.
   request_timeout_seconds: 300    # high thinking can take a few minutes
-  temperature: null               # null = model default (1.0); Google advises not lowering it for Gemini 3
-
-# Real free-tier limits per key. Google no longer publishes them.
-# OWNER: read yours at aistudio.google.com/rate-limit and correct these numbers.
-gemini_limits:
-  flash: {rpm: 5, rpd: 20}
-  flash_lite: {rpm: 15, rpd: 500}
-
-# Our own caps, per key per day (below the real limits). Days reset at midnight Pacific time.
-caps:
-  gemini_flash_per_day: 12
-  gemini_flash_lite_per_day: 150
+  temperature: null               # null = model default (1.0); Google advises not lowering it for Gemini 3+
 
 budget:
   modal_warn_usd: 20

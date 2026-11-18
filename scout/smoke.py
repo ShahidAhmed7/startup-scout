@@ -1,6 +1,6 @@
 """Phase 0 smoke tests that use real services.
 
-  python -m scout.smoke gemini                    # 3 tiny calls: Flash-Lite + Flash on main key, Flash-Lite on backup key
+  python -m scout.smoke gemini                    # tiny calls: card model, Flash-Lite (both keys), Gemma
   python -m scout.smoke whatsapp --owner-said-hi  # one free-form test message to the owner
 
 The WhatsApp test needs the 24-hour window to be open: the owner must have sent "hi"
@@ -22,27 +22,33 @@ TEST_SCHEMA = {
     "required": ["ok", "capital_of_bangladesh"],
     "additionalProperties": False,
 }
+JSON_PROMPT = "Reply with ok=true and the capital of Bangladesh."
+
+
+def _check(data):
+    if not isinstance(data, dict) or data.get("ok") is not True:
+        raise ValueError("expected ok=true")
 
 
 def smoke_gemini() -> None:
-    from scout.llm.gemini import generate
+    from scout.llm.gemini import GeminiError, GeminiUnavailable, generate
 
+    # (job, key) pairs. Uses config.yaml llm settings: high thinking, big output limit.
+    tests = [("flash_lite", "main"), ("flash_lite", "backup"), ("card", "main"), ("gemma", "main")]
+    failed = []
     with repo.connect() as conn:
-        def check(data):
-            if not isinstance(data, dict) or data.get("ok") is not True:
-                raise ValueError("expected ok=true")
-
-        r1 = generate("flash_lite", "Reply with ok=true and the capital of Bangladesh.", kind="test",
-                      schema=TEST_SCHEMA, validate=check, conn=conn)
-        print(f"Flash-Lite ({r1.model_id}, {r1.key_label} key): {r1.data}  [{r1.tokens_in} in / {r1.tokens_out} out tokens]")
-
-        r2 = generate("flash", "In one short sentence: why do startups in Dhaka often use bKash for payments?",
-                      kind="test", conn=conn)  # uses config.yaml llm settings: high thinking, 65,536 max output
-        print(f"Flash ({r2.model_id}, {r2.key_label} key): {r2.text.strip()[:200]}")
-
-        r3 = generate("flash_lite", "Reply with ok=true and the capital of Bangladesh.", kind="test",
-                      schema=TEST_SCHEMA, validate=check, conn=conn, only_key="backup")
-        print(f"Flash-Lite ({r3.model_id}, {r3.key_label} key): {r3.data}")
+        for alias, key in tests:
+            try:
+                r = generate(alias, JSON_PROMPT, kind="test", schema=TEST_SCHEMA, validate=_check,
+                             conn=conn, only_key=key)
+                print(f"✓ {alias:<10} {r.model_id:<22} {r.key_label:<6} key: {r.data}  "
+                      f"[{r.tokens_in} in / {r.tokens_out} out tokens]")
+            except (GeminiUnavailable, GeminiError) as e:
+                failed.append(alias)
+                print(f"✗ {alias:<10} {key:<6} key: {str(e)[:160]}")
+    if failed:
+        raise SystemExit(f"Not passed yet: {', '.join(failed)}. If the error says 'high demand', "
+                         "Google is busy; try again later.")
     print("Gemini smoke test passed.")
 
 
