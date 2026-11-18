@@ -7,6 +7,7 @@ output_language: English        # every message is in English; non-English sourc
 digest_time: "08:00"
 digest_mix: {bangladesh: 3, global: 2}
 min_score: 6
+min_feasibility: 5    # a pick must be buildable by 2-3 people in ~2 months
 
 owner:
   skills: [AI and machine learning, Python, web apps]
@@ -42,6 +43,7 @@ models:
     id: gemini-4-hydrogen
     free_limits: {rpm: 5, tpm: 250000, rpd: 20}
     cap_per_day: 18               # our own cap per key, below the free limit -> 36/day with both keys
+    concurrency_per_key: 2        # requests in flight at once per key (high thinking takes 20-60s)
     reserve_for_chat: 8           # of those 36, the 07:00 pipeline leaves 8 for deep dives and ask
                                   # (Google's quota day resets around 14:00 Dhaka, not at midnight)
     max_output_tokens: 65536
@@ -49,11 +51,13 @@ models:
     id: gemini-3.5-flash-lite
     free_limits: {rpm: 15, tpm: 250000, rpd: 500}
     cap_per_day: 150
+    concurrency_per_key: 3
     max_output_tokens: 65536
   gemma:                          # free fallback: Google's open model, served by the Gemini API
     id: gemma-4-31b-it
     free_limits: {rpm: 15, tpm: null, rpd: 1500}
     cap_per_day: 300
+    concurrency_per_key: 2
     max_output_tokens: 32768
   qwen:                           # last resort, and the ONLY model that ever sees private notes
     id: Qwen/Qwen3.6-27B-FP8      # runs on Modal's A100 80GB, costs credits

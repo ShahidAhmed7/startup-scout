@@ -63,6 +63,11 @@ def _post(payload: dict, http: httpx.Client | None = None) -> str:
     return r.json()["messages"][0]["id"]
 
 
+def send_payload(payload: dict, http: httpx.Client | None = None) -> str:
+    """Send a payload built by formats.py (its "to" is always replaced by the owner's number)."""
+    return _post(dict(payload, to=owner_number()), http)
+
+
 def send_text(body: str, http: httpx.Client | None = None) -> str:
     payload = {
         "messaging_product": "whatsapp",

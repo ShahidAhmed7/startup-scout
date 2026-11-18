@@ -267,7 +267,7 @@ def test_parallel_jobs_use_both_keys_at_the_same_time():
     http = httpx.Client(transport=httpx.MockTransport(handler))
     results = gemini.run_parallel([("card", f"card {i}", {"schema": SCHEMA, "http": http}) for i in range(4)])
     assert all(r.model_id == "gemini-4-hydrogen" for r in results)
-    assert state["max"] == 2                       # two requests in flight at once
+    assert state["max"] == 4                       # 2 keys x 2 Hydrogen requests in flight at once
     assert keys.count("main-key") == 2 and keys.count("backup-key") == 2
 
 

@@ -207,3 +207,49 @@ begin
     execute 'revoke all on all tables in schema scout from anon, authenticated';
   end if;
 end $$;
+
+-- ---------- Phase 1 additions ----------
+alter table items    add column if not exists kind text;              -- funding | launch | other | prefiltered | yc
+alter table items    add column if not exists extracted_at timestamptz;
+alter table startups add column if not exists website text;
+alter table startups add column if not exists yc_batch text;
+alter table startups add column if not exists last_seen_at timestamptz not null default now();
+alter table rounds   add column if not exists amount_text text;
+alter table scores   add column if not exists run_date date;
+alter table scores   add column if not exists category text;
+alter table scores   add column if not exists skip boolean not null default false;
+alter table scores   add column if not exists rank_bd numeric;
+alter table scores   add column if not exists rank_global numeric;
+alter table cards    add column if not exists run_date date;
+alter table cards    add column if not exists market text;            -- bangladesh | global
+alter table cards    add column if not exists title text;
+alter table cards    add column if not exists data_json jsonb;
+
+-- Which items mention which startup (sources + buzz).
+create table if not exists startup_items (
+  startup_id bigint not null references startups(id) on delete cascade,
+  item_id    bigint not null references items(id) on delete cascade,
+  primary key (startup_id, item_id)
+);
+
+-- Cached ddgs searches and fetched homepages (be polite: don't repeat requests).
+create table if not exists search_cache (
+  query        text primary key,
+  results_json jsonb not null,
+  fetched_at   timestamptz not null default now()
+);
+
+do $$
+declare t text;
+begin
+  for t in select tablename from pg_tables where schemaname = 'scout' loop
+    execute format('alter table scout.%I enable row level security', t);
+  end loop;
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'revoke all on all tables in schema scout from anon, authenticated';
+  end if;
+end $$;
+
+-- ---------- source health ----------
+alter table sources add column if not exists first_seen_at timestamptz not null default now();
+alter table sources add column if not exists notified_at timestamptz;   -- when the owner was told it is down

@@ -12,6 +12,7 @@ Hard rule 5: only public data may be sent here. Private notes go to Qwen only.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -100,23 +101,30 @@ def _throttle(key_label: str, alias: str) -> None:
 
 # ---------- key pool: both keys work in parallel ----------
 
-_busy: set[tuple[str, str]] = set()
+_busy: dict[tuple[str, str], int] = {}
 _pool = threading.Condition()
+
+
+def _slots(alias: str) -> int:
+    return int(model_cfg(alias).get("concurrency_per_key", 1))
 
 
 @contextmanager
 def _claim_key(alias: str, labels: list[str]):
-    """Claim a free key for this model (main first when both are free). Waits if all are busy."""
+    """Claim a key for this model: the one with the fewest requests in flight (main first on ties).
+    Each key runs up to `concurrency_per_key` requests at once; waits if every key is full."""
+    slots = _slots(alias)
     with _pool:
-        while all((alias, l) in _busy for l in labels):
+        while all(_busy.get((alias, l), 0) >= slots for l in labels):
             _pool.wait()
-        label = next(l for l in labels if (alias, l) not in _busy)
-        _busy.add((alias, label))
+        label = min((l for l in labels if _busy.get((alias, l), 0) < slots),
+                    key=lambda l: (_busy.get((alias, l), 0), labels.index(l)))
+        _busy[(alias, label)] = _busy.get((alias, label), 0) + 1
     try:
         yield label
     finally:
         with _pool:
-            _busy.discard((alias, label))
+            _busy[(alias, label)] -= 1
             _pool.notify_all()
 
 
@@ -280,7 +288,10 @@ def generate_chain(alias: str, prompt: str, **kwargs) -> Result:
 def run_job(job: str, prompt: str, **kwargs) -> Result:
     """Run a pipeline/chat job ("extract", "score", "card", "deep_dive", "friday", "ask") on the model
     config.yaml `jobs` assigns it (Hydrogen first wherever it fits), with the fallback chain behind it."""
-    return generate_chain(config()["jobs"][job], prompt, kind=job, **kwargs)
+    alias = config()["jobs"][job]
+    if os.environ.get("SCOUT_DEV") == "1" and alias == "hydrogen":
+        alias = "flash_lite"  # dev runs save Hydrogen's 20/day for the real run
+    return generate_chain(alias, prompt, kind=job, **kwargs)
 
 
 def run_parallel(tasks: list[tuple[str, str, dict]], workers: int | None = None) -> list[Result | Exception]:
@@ -290,7 +301,9 @@ def run_parallel(tasks: list[tuple[str, str, dict]], workers: int | None = None)
     exception if that task failed (so one failure never loses the others' work).
     Example: 5 cards -> main and backup each write one at a time, side by side.
     """
-    workers = workers or len(KEYS)
+    if workers is None:
+        aliases = {config()["jobs"][job] for job, _, _ in tasks} or {"flash_lite"}
+        workers = len(KEYS) * max(_slots(a) for a in aliases)
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = [ex.submit(run_job, job, prompt, **kw) for job, prompt, kw in tasks]
         out: list[Result | Exception] = []

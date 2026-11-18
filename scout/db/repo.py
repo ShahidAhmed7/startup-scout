@@ -14,7 +14,7 @@ SCHEMA = "scout"
 TABLES = [
     "sources", "items", "startups", "rounds", "scores", "skipped", "cards", "digests",
     "messages", "owner_state", "settings", "ideas", "notes", "assumptions", "watches",
-    "signals", "usage", "runs", "yc_seen",
+    "signals", "usage", "runs", "yc_seen", "startup_items", "search_cache",
 ]
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
