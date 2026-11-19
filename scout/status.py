@@ -157,6 +157,15 @@ def daily_report() -> None:
                 "select name from sources where status = 'active' and fail_count >= 3 order by name"
             ).fetchall()
             print(f"   Sources down           {', '.join(r['name'] for r in down) if down else 'none'}")
+            from datetime import datetime, timezone
+
+            from scout import firecrawl
+            if firecrawl.available():
+                month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                print(f"   Firecrawl credits      {firecrawl.credits_used(conn, month)}/{cfg['firecrawl']['monthly_credit_cap']} "
+                      f"this month (free plan: 1,000)")
+            else:
+                print("   Firecrawl              not set up (add FIRECRAWL_API_KEY to read blocked sites)")
     except Exception as e:
         print(f"   (could not read the database: {type(e).__name__})")
 

@@ -8,6 +8,7 @@
 #   priority  high | normal   (owner: YC and US news are top priority; trim "normal" first if volume is too high)
 #   lang      en unless noted; non-English items are translated to English during extraction
 #   status    active | spare (works, not fetched yet) | flaky (try again later) | dead (don't use)
+#   via       firecrawl = read through Firecrawl (owner's decision; needs FIRECRAWL_API_KEY, skipped without it)
 #
 # Politeness: one clear User-Agent, conditional GET (ETag / Last-Modified), at least 1 second
 # between requests to the same host, never bypass paywalls, logins or 403 blocks.
@@ -54,10 +55,10 @@ sources:
      url: "https://feeds.feedburner.com/BetaList", note: "New products, no funding info. Maybe later."}
   - {id: hn_show, name: "Show HN (Algolia)", kind: api, region: global, role: funding, priority: normal, status: spare,
      url: "https://hn.algolia.com/api/v1/search_by_date?tags=show_hn&hitsPerPage=50"}
-  - {id: venturebeat, name: "VentureBeat", kind: rss, region: usa, role: funding, priority: normal, status: flaky,
-     url: "https://venturebeat.com/feed/", note: "429 on 2026-11-19."}
-  - {id: finsmes, name: "FinSMEs", kind: rss, region: global, role: funding, priority: normal, status: dead,
-     url: "https://www.finsmes.com/feed", note: "403 blocked."}
+  - {id: venturebeat, name: "VentureBeat", kind: rss, region: usa, role: funding, priority: normal, status: spare, via: firecrawl,
+     url: "https://venturebeat.com/feed/", note: "429 to plain readers; works via Firecrawl but is mostly AI news (owner wants variety), so spare."}
+  - {id: finsmes, name: "FinSMEs", kind: rss, region: global, role: funding, priority: high, status: active, via: firecrawl,
+     url: "https://www.finsmes.com/feed", note: "403 to plain readers; read via Firecrawl (owner's decision). ~30 rounds/day."}
   - {id: pitchbook, name: "PitchBook News", kind: rss, region: usa, role: funding, priority: normal, status: dead,
      url: "https://pitchbook.com/news/rss", note: "403 blocked."}
   - {id: fortune_term_sheet, name: "Fortune Term Sheet", kind: rss, region: usa, role: funding, priority: normal, status: dead,
@@ -70,8 +71,8 @@ sources:
      url: "https://sifted.eu/feed"}
   - {id: silicon_republic, name: "Silicon Republic", kind: rss, region: europe, role: funding, priority: normal, status: spare,
      url: "https://www.siliconrepublic.com/feed"}
-  - {id: eu_startups, name: "EU-Startups", kind: rss, region: europe, role: funding, priority: normal, status: dead,
-     url: "https://www.eu-startups.com/feed/", note: "403 blocked."}
+  - {id: eu_startups, name: "EU-Startups", kind: rss, region: europe, role: funding, priority: normal, status: active, via: firecrawl,
+     url: "https://www.eu-startups.com/feed/", note: "403 to plain readers; read via Firecrawl."}
 
   # ---------- India ----------
   - {id: entrackr, name: "Entrackr", kind: rss, region: india, role: funding, priority: normal, status: active,
@@ -105,11 +106,11 @@ sources:
   - {id: fastcompany_me, name: "Fast Company Middle East", kind: rss, region: mideast, role: funding, priority: normal, status: active,
      url: "https://fastcompanyme.com/feed/"}
   - {id: fwdstart, name: "FWDStart", kind: rss, region: mideast, role: funding, priority: normal, status: dead,
-     url: "https://www.fwdstart.me/feed", note: "403 blocked."}
+     url: "https://www.fwdstart.me/feed", note: "403 to plain readers; Firecrawl's proxy failed twice (2026-11-19)."}
   - {id: magnitt, name: "MAGNiTT", kind: rss, region: mideast, role: funding, priority: normal, status: dead,
-     url: "https://magnitt.com/news/rss", note: "403 blocked."}
+     url: "https://magnitt.com/news/rss", note: "Feed removed (404 even via Firecrawl)."}
   - {id: gulf_business, name: "Gulf Business", kind: rss, region: mideast, role: funding, priority: normal, status: dead,
-     url: "https://gulfbusiness.com/feed/", note: "403 blocked."}
+     url: "https://gulfbusiness.com/feed/", note: "Refuses plain readers (403) and Firecrawl (405)."}
   - {id: menabytes, name: "MENAbytes", kind: rss, region: mideast, role: funding, priority: normal, status: dead,
      url: "https://www.menabytes.com/feed/", note: "No new posts for over a year."}
 
@@ -136,8 +137,8 @@ sources:
      url: "https://launchbaseafrica.com/feed/"}
   - {id: the_big_deal, name: "The Big Deal (Africa funding data)", kind: rss, region: africa, role: funding, priority: normal, status: active,
      url: "https://thebigdeal.substack.com/feed"}
-  - {id: techpoint_africa, name: "Techpoint Africa", kind: rss, region: africa, role: funding, priority: normal, status: dead,
-     url: "https://techpoint.africa/feed/", note: "403 blocked."}
+  - {id: techpoint_africa, name: "Techpoint Africa", kind: rss, region: africa, role: funding, priority: normal, status: active, via: firecrawl,
+     url: "https://techpoint.africa/feed/", note: "403 to plain readers; read via Firecrawl."}
 
   # ---------- Southeast Asia ----------
   - {id: e27, name: "e27", kind: rss, region: sea, role: funding, priority: normal, status: active,
@@ -161,9 +162,9 @@ sources:
   - {id: vnexpress_business, name: "VnExpress Business", kind: rss, region: sea, role: context, priority: normal, status: spare,
      url: "https://e.vnexpress.net/rss/business.rss"}
   - {id: dealstreetasia, name: "DealStreetAsia", kind: rss, region: sea, role: funding, priority: normal, status: dead,
-     url: "https://www.dealstreetasia.com/feed/", note: "503 twice (bot protection). Not bypassing."}
-  - {id: techinasia, name: "Tech in Asia", kind: rss, region: sea, role: funding, priority: normal, status: dead,
-     url: "https://www.techinasia.com/feed", note: "403 blocked."}
+     url: "https://www.dealstreetasia.com/feed/", note: "Feed disabled for everyone ('mitigate bot attacks'), even via Firecrawl."}
+  - {id: techinasia, name: "Tech in Asia", kind: rss, region: sea, role: funding, priority: normal, status: active, via: firecrawl,
+     url: "https://www.techinasia.com/feed", note: "403 to plain readers; read via Firecrawl (headlines only; articles are paywalled)."}
   - {id: krasia, name: "KrASIA", kind: rss, region: sea, role: funding, priority: normal, status: dead,
      url: "https://kr-asia.com/feed", note: "404."}
 
@@ -220,7 +221,7 @@ sources:
      note: "Recently added startups with payment-provider-verified revenue. robots.txt allows all; we read public .md pages, max 20/day."}
   - {id: reddit_saas, name: "Reddit r/SaaS complaints", kind: rss, region: global, role: context, priority: normal, status: dead,
      url: "https://www.reddit.com/r/SaaS/new/.rss",
-     note: "Reddit returns 404/429/empty feeds to unauthenticated readers (2026-11-19). Needs a free Reddit app registered by the owner."}
+     note: "Reddit returns 404/429/empty feeds to unauthenticated readers, and Firecrawl does not support reddit.com (2026-11-19). Needs a free Reddit app registered by the owner."}
   - {id: reddit_smallbusiness, name: "Reddit r/smallbusiness complaints", kind: rss, region: global, role: context, priority: normal, status: dead,
      url: "https://www.reddit.com/r/smallbusiness/new/.rss",
      note: "Same as r/SaaS: blocked without OAuth."}

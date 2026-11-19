@@ -85,6 +85,9 @@ llm:
   request_timeout_seconds: 300    # high thinking can take a few minutes
   temperature: null               # null = model default (1.0); Google advises not lowering it for Gemini 3+
 
+# Firecrawl (owner, 2026-11-19): read feeds/homepages that block our plain reader. Free plan = 1,000 credits/month.
+firecrawl: {monthly_credit_cap: 900, daily_credit_cap: 40}
+
 budget:
   modal_warn_usd: 20
   modal_stop_usd: 25

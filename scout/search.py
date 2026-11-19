@@ -79,6 +79,14 @@ def homepage_text(conn, url: str | None, limit: int = 6000) -> str:
             text = (trafilatura.extract(r.text[:2_000_000], include_comments=False) or "")[:limit]
     except Exception:
         text = ""
+    if not text:  # blocked or empty: try Firecrawl (owner's decision), within its free-credit caps
+        try:
+            from scout import firecrawl
+
+            if firecrawl.available():
+                text = firecrawl.scrape(conn, url, "markdown", kind="homepage")[:limit]
+        except Exception:
+            text = ""
     _store(conn, key, text)
     return text
 

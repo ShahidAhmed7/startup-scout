@@ -76,18 +76,8 @@ def _recent(dt: datetime | None, since: datetime) -> bool:
 
 # ---------- fetchers ----------
 
-def fetch_rss(client, limiter, src, since, state) -> FetchResult:
-    headers = {}
-    if state.get("etag"):
-        headers["If-None-Match"] = state["etag"]
-    if state.get("last_modified"):
-        headers["If-Modified-Since"] = state["last_modified"]
-    limiter.wait(src["url"])
-    r = client.get(src["url"], headers=headers)
-    if r.status_code == 304:
-        return FetchResult([], state.get("etag"), state.get("last_modified"))
-    r.raise_for_status()
-    feed = feedparser.parse(r.content)
+def _parse_feed(content, src, since) -> list[RawItem]:
+    feed = feedparser.parse(content)
     if feed.bozo and not feed.entries:
         raise ValueError(f"unreadable feed: {type(feed.bozo_exception).__name__}")
     items = []
@@ -99,7 +89,41 @@ def fetch_rss(client, limiter, src, since, state) -> FetchResult:
         items.append(RawItem(src["id"], clean_url(link), clean_text(e.get("title"), 400),
                              clean_text(e.get("summary") or e.get("description"), 2000), dt,
                              lang=src.get("lang", "en")))
-    return FetchResult(items, r.headers.get("etag"), r.headers.get("last-modified"))
+    return items
+
+
+def fetch_via_firecrawl(conn, src, since) -> FetchResult:
+    from scout import firecrawl
+
+    return FetchResult(_parse_feed(firecrawl.scrape(conn, src["url"], "rawHtml", kind="feed"), src, since))
+
+
+def fetch_rss(client, limiter, src, since, state, conn=None) -> FetchResult:
+    """Plain polite fetch; if the site blocks us (403/429/503) and Firecrawl is set up, retry through Firecrawl."""
+    from scout import firecrawl
+
+    if src.get("via") == "firecrawl":
+        return fetch_via_firecrawl(conn, src, since)
+    try:
+        return _fetch_rss_plain(client, limiter, src, since, state)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (401, 403, 429, 503) and firecrawl.available():
+            return fetch_via_firecrawl(conn, src, since)
+        raise
+
+
+def _fetch_rss_plain(client, limiter, src, since, state) -> FetchResult:
+    headers = {}
+    if state.get("etag"):
+        headers["If-None-Match"] = state["etag"]
+    if state.get("last_modified"):
+        headers["If-Modified-Since"] = state["last_modified"]
+    limiter.wait(src["url"])
+    r = client.get(src["url"], headers=headers)
+    if r.status_code == 304:
+        return FetchResult([], state.get("etag"), state.get("last_modified"))
+    r.raise_for_status()
+    return FetchResult(_parse_feed(r.content, src, since), r.headers.get("etag"), r.headers.get("last-modified"))
 
 
 def fetch_gnews(client, limiter, src, since, state) -> FetchResult:
@@ -270,7 +294,10 @@ def collect(conn, lookback_hours: float | None = None, only: list[str] | None = 
     sync_sources_table(conn)
     since = datetime.now(timezone.utc) - timedelta(hours=lookback_hours or source_defaults()["lookback_hours"])
     limiter = HostLimiter(source_defaults()["min_seconds_between_requests_same_host"])
-    active = [s for s in sources("active") if _fetcher(s) and (not only or s["id"] in only)]
+    from scout import firecrawl
+
+    active = [s for s in sources("active") if _fetcher(s) and (not only or s["id"] in only)
+              and (s.get("via") != "firecrawl" or firecrawl.available())]  # no key: skip quietly
     state = {r["id"]: r for r in conn.execute("select id, etag, last_modified from sources").fetchall()}
     lock = threading.Lock()
     stats = {"sources_ok": 0, "sources_failed": [], "fetched": 0, "new_items": 0}
@@ -279,7 +306,7 @@ def collect(conn, lookback_hours: float | None = None, only: list[str] | None = 
         def one(src):
             try:
                 fn = _fetcher(src)
-                kwargs = {"conn": conn} if fn in (fetch_yc, fetch_trustmrr) else {}
+                kwargs = {"conn": conn} if fn in (fetch_yc, fetch_trustmrr, fetch_rss) else {}
                 res = fn(client, limiter, src, since, state.get(src["id"], {}), **kwargs)
                 with lock:
                     n_new = store_items(conn, res.items)
