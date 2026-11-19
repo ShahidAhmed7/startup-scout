@@ -13,3 +13,6 @@ __pycache__/
 # Local data / caches
 data/
 .DS_Store
+
+# Project docs stay local (owner's choice): AGENTS.md, CLAUDE.md, HANDOVER.md, PROGRESS.md
+*.md
