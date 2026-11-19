@@ -55,6 +55,22 @@ def ai_row(i, sector, bd, gl, ai=False, feas=7, buzz=1):
             "rank_bd": bd, "rank_global": gl, "buzz": buzz, "feas": feas}
 
 
+def test_ai_cap_is_a_maximum_across_picks_and_explore():
+    rows = [ai_row(i, f"sector {i}", 9, 9, ai=True) for i in range(1, 9)] + \
+           [ai_row(20 + i, f"other sector {i}", 6, 6) for i in range(1, 9)]
+    sl = shortlist(rows, {"bangladesh": 3, "global": 2}, 6, max_ai_native=3, explore_rows=5)
+    shown = sl["bangladesh"] + sl["global"] + sl["explore"]
+    assert sum(r["ai_native"] for r in shown) == 3          # never more than 3 in the whole digest
+    assert len(sl["bangladesh"] + sl["global"]) == 5        # the other picks are filled with non-AI startups
+
+
+def test_ai_cap_is_not_a_quota():
+    rows = [ai_row(i, f"sector {i}", 8, 8) for i in range(1, 6)] + [ai_row(9, "dev tools", 6, 6, ai=True)]
+    sl = shortlist(rows, {"bangladesh": 3, "global": 2}, 6, max_ai_native=3, explore_rows=5)
+    picks = sl["bangladesh"] + sl["global"]
+    assert sum(r["ai_native"] for r in picks) == 0          # no AI forced in when better non-AI ideas exist
+
+
 def test_at_most_two_ai_native_picks_and_sectors_differ():
     rows = [ai_row(1, "marketing and sales", 9, 8, ai=True), ai_row(2, "real estate and construction", 9, 7, ai=True),
             ai_row(3, "developer tools and AI infrastructure", 8, 9, ai=True), ai_row(4, "health", 8, 9, ai=True),

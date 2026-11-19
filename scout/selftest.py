@@ -67,7 +67,7 @@ def variety(conn, dev: bool = True) -> None:
         cfg = effective(conn)
         div = cfg["diversity"]
         sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], min_feasibility=cfg["min_feasibility"],
-                       max_ai_native=div["max_ai_native_picks"], explore_rows=div["explore_rows"],
+                       max_ai_native=div["max_ai_native"], explore_rows=div["explore_rows"],
                        explore_min_score=div["explore_min_score"])
         names = {r["id"]: r["name"] for r in conn.execute("select id, name from startups where id = any(%s)",
                                                          ([r["startup_id"] for r in rows],)).fetchall()}

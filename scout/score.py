@@ -124,9 +124,10 @@ def shortlist(rows: list[dict], mix: dict, min_score: int, reserve: int = 3, min
     """rows: [{startup_id, sector, ai_native, bd, gl, rank_bd, rank_global, buzz, feas}] (not skipped).
 
     Picks: top `mix['bangladesh']` by Bangladesh score and `mix['global']` by global score, each >= min_score and
-    feasibility >= min_feasibility; every pick from a DIFFERENT broad sector; at most `max_ai_native` AI-first
-    products; tie-break on buzz. Explore: up to `explore_rows` more startups (score >= explore_min_score) from
-    sectors not used yet, non-AI first, to show the breadth of what got funded. Reserve: spare picks."""
+    feasibility >= min_feasibility; every pick from a DIFFERENT broad sector; tie-break on buzz.
+    Explore: up to `explore_rows` more startups (score >= explore_min_score) from sectors not used yet, non-AI first.
+    `max_ai_native` caps AI-first startups across picks AND explore rows together. It is a maximum, not a quota:
+    the digest may contain fewer (or none). Reserve: spare picks."""
     feasible = [r for r in rows if r.get("feas", 10) >= min_feasibility]
     used_ids: set[int] = set()
     used_sectors: set[str] = set()
@@ -172,10 +173,10 @@ def shortlist(rows: list[dict], mix: dict, min_score: int, reserve: int = 3, min
             continue
         if sector(r) and sector(r) != "other" and sector(r) in used_sectors:
             continue
+        if max_ai_native is not None and r.get("ai_native") and ai_used[0] >= max_ai_native:
+            continue
         explore.append(r)
-        used_ids.add(r["startup_id"])
-        if sector(r):
-            used_sectors.add(sector(r))
+        take(r)
     return {"bangladesh": bd, "global": gl, "reserve": extra, "explore": explore}
 
 

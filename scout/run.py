@@ -75,7 +75,7 @@ def run_pipeline(conn, *, skip_collect: bool = False, limit: int | None = None, 
         rows = todays_rows(conn, run_date)
         div = cfg.get("diversity", {})
         sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], min_feasibility=cfg.get("min_feasibility", 0),
-                       max_ai_native=div.get("max_ai_native_picks"), explore_rows=div.get("explore_rows", 0),
+                       max_ai_native=div.get("max_ai_native"), explore_rows=div.get("explore_rows", 0),
                        explore_min_score=div.get("explore_min_score", 5))
         picks = [(r, "bangladesh") for r in sl["bangladesh"]] + [(r, "global") for r in sl["global"]]
         cr = cards_mod.write_cards(conn, picks, run_date, m["new_round"])
