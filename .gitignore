@@ -17,3 +17,6 @@ data/
 # Project docs stay local (owner's choice): AGENTS.md, CLAUDE.md, HANDOVER.md, PROGRESS.md
 *.md
 !README.md
+
+# Product walkthrough PDF stays local until updated (screenshots in docs/screenshots are generated from it)
+*.pdf
