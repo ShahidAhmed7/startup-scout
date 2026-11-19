@@ -10,6 +10,27 @@
 
 </div>
 
+<table>
+<tr><td align="center" valign="top" width="25%"><img src="docs/screenshots/digest.png" width="200" alt="Morning digest"><br><sub><b>Morning digest</b></sub></td><td align="center" valign="top" width="25%"><img src="docs/screenshots/card.png" width="200" alt="Opportunity card"><br><sub><b>Opportunity card</b></sub></td><td align="center" valign="top" width="25%"><img src="docs/screenshots/deep-dive.png" width="200" alt="Deep dive"><br><sub><b>Deep dive</b></sub></td><td align="center" valign="top" width="25%"><img src="docs/screenshots/validation-kit.png" width="200" alt="Validation kit"><br><sub><b>Validation kit</b></sub></td></tr>
+<tr><td align="center" valign="top" width="25%"><img src="docs/screenshots/notebook.png" width="200" alt="Idea notebook"><br><sub><b>Idea notebook</b></sub></td><td align="center" valign="top" width="25%"><img src="docs/screenshots/private-notes.png" width="200" alt="Private field notes"><br><sub><b>Private field notes</b></sub></td><td align="center" valign="top" width="25%"><img src="docs/screenshots/friday-report.png" width="200" alt="Friday report"><br><sub><b>Friday report</b></sub></td><td align="center" valign="top" width="25%"><img src="docs/screenshots/watch-alerts.png" width="200" alt="Watch alerts"><br><sub><b>Watch alerts</b></sub></td></tr>
+</table>
+
+<p align="center"><img src="docs/screenshots/archive.png" width="860" alt="Private web archive"><br><sub><b>Private web archive</b></sub></p>
+
+<details>
+<summary><b>More screens</b>: focused Q&amp;A, monthly report, settings by chat</summary>
+<br>
+<table>
+<tr>
+<td align="center" valign="top" width="33%"><img src="docs/screenshots/ask.png" width="200" alt="Focused Q&A"><br><sub><b>Focused Q&amp;A</b></sub></td>
+<td align="center" valign="top" width="33%"><img src="docs/screenshots/monthly-report.png" width="200" alt="Monthly report"><br><sub><b>Monthly report</b></sub></td>
+<td align="center" valign="top" width="33%"><img src="docs/screenshots/settings.png" width="200" alt="Settings by chat"><br><sub><b>Settings by chat</b></sub></td>
+</tr>
+</table>
+</details>
+
+<p align="center"><sub>Illustrative screens. Startups and figures shown are example data.</sub></p>
+
 <br>
 
 > [!IMPORTANT]
