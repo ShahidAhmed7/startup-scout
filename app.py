@@ -24,6 +24,7 @@ image = (
         "ddgs==9.16.1",
         "fastapi[standard]==0.165.0",
         "tzdata==2026.1",
+        "python-multipart==0.0.34",
     )
     .add_local_file("config.yaml", "/root/config.yaml")
     .add_local_file("sources.yaml", "/root/sources.yaml")

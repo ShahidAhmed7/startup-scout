@@ -73,7 +73,10 @@ def run_pipeline(conn, *, skip_collect: bool = False, limit: int | None = None, 
             stats["taste"] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
         cfg = effective(conn)
         rows = todays_rows(conn, run_date)
-        sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], min_feasibility=cfg.get("min_feasibility", 0))
+        div = cfg.get("diversity", {})
+        sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], min_feasibility=cfg.get("min_feasibility", 0),
+                       max_ai_native=div.get("max_ai_native_picks"), explore_rows=div.get("explore_rows", 0),
+                       explore_min_score=div.get("explore_min_score", 5))
         picks = [(r, "bangladesh") for r in sl["bangladesh"]] + [(r, "global") for r in sl["global"]]
         cr = cards_mod.write_cards(conn, picks, run_date, m["new_round"])
         # if a card failed, use a reserve pick for the same market
@@ -93,7 +96,8 @@ def run_pipeline(conn, *, skip_collect: bool = False, limit: int | None = None, 
         d = digest_mod.build(conn, run_date, [(cid, card_market[cid]) for cid in ordered],
                              {"found": len(cands), "scored": sc["scored"], "skipped": sc["skipped"],
                               "skip_reasons": sc["skip_reasons"]},
-                             notes=health_notes(conn), funding_since=run_started)
+                             notes=health_notes(conn), funding_since=run_started,
+                             explore=[r["startup_id"] for r in sl["explore"]])
         stats["digest_id"] = d["id"]
         try:  # watches and saved-idea alerts, only on change (queued if the window is closed)
             from scout import watches

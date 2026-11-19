@@ -73,6 +73,13 @@ def extract_prompt(articles: list[dict]) -> str:
 
 SCORE_KEYS = ["bangladesh", "global", "pain", "why_now", "feasibility", "fits_you"]
 
+# Broad sectors, so the daily picks can be spread across the economy (not five flavours of AI software).
+SECTORS = ["fintech", "commerce and retail", "logistics and mobility", "health", "education", "agriculture and food",
+           "travel and hospitality", "real estate and construction", "jobs and HR", "media and creators",
+           "marketing and sales", "productivity and business software", "developer tools and AI infrastructure",
+           "security", "legal and government", "climate and energy", "manufacturing and industry",
+           "consumer and social", "other"]
+
 SCORE_SCHEMA = {
     "type": "object",
     "properties": {"startups": {"type": "array", "items": {
@@ -80,6 +87,8 @@ SCORE_SCHEMA = {
         "properties": {
             "startup_id": {"type": "integer"},
             "category": {"type": "string"},
+            "sector": {"type": "string", "enum": SECTORS},
+            "ai_native": {"type": "boolean"},
             "search_phrase": {"type": "string"},
             "skip": {"type": "boolean"},
             "skip_reason": {"type": "string"},
@@ -93,7 +102,7 @@ SCORE_SCHEMA = {
             "ai_angle_strong": {"type": "boolean"},
             "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         },
-        "required": ["startup_id", "category", "search_phrase", "skip", "skip_reason", "scores",
+        "required": ["startup_id", "category", "sector", "ai_native", "search_phrase", "skip", "skip_reason", "scores",
                      "money_to_start", "reasons", "ai_angle", "ai_angle_strong", "confidence"],
     }}},
     "required": ["startups"],
@@ -114,7 +123,9 @@ Shared sub-scores:
   ship; 4-6 = possible but hard (deep integrations, trust, data access); 1-3 = needs capital, hardware, licences
   or physical operations.
 - money_to_start: low / medium / high, with a short reason.
-- fits_you: match with the owner's skills.
+- fits_you: can a small software team with the owner's skills build it? The owner can build any software product
+  (web apps, mobile-friendly sites, marketplaces, booking/ordering/payment tools, dashboards); AI is a plus, not a
+  requirement. A non-AI marketplace or fintech tool can fit just as well as an AI product.
 
 bangladesh = could this small team build a version for the Bangladeshi market?
 - 8-10: a common, painful problem in Bangladesh; buyers will pay in taka via bKash, Nagad or cash on delivery;
@@ -138,8 +149,15 @@ global = could this small team, based in Bangladesh, build a version and sell it
 Hard rules: bangladesh and global may each be at most feasibility + 2. If money_to_start is high, neither may
 be above 6. An idea is not good just because the funded company is impressive.
 
+AI is ONE angle on every idea, not a filter: never score an idea higher just because it uses AI. Marketplaces,
+logistics, fintech, commerce, education, health, agriculture, travel and consumer businesses can score just as high.
+
 ai_angle: one line: could AI make this cheaper or better, and could an open model do the job?
 ai_angle_strong: true only if AI is central to a cheaper/better version a small team could build.
+ai_native: true if the funded product itself IS an AI product (AI agent, AI model, AI-first software); false for
+businesses that merely use AI somewhere.
+sector: the ONE broad sector from the allowed list that best describes the customer and market (not the technology):
+an AI tool for clinics is "health", an AI tool for shops is "commerce and retail".
 
 skip = true if the startup is in any of these categories: {skip_list}. Then give skip_reason (the category).
 Still fill every other field (scores may be rough).

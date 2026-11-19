@@ -40,12 +40,30 @@ def client(monkeypatch, pw="s3cret"):
     return TestClient(app)
 
 
-def test_password_required(monkeypatch):
+def test_not_signed_in_goes_to_login(monkeypatch):
     c = client(monkeypatch)
-    assert c.get("/archive").status_code == 401
-    assert c.get("/archive", auth=("owner", "wrong")).status_code == 401
+    r = c.get("/archive", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/archive/login"
+    assert c.get("/archive", auth=("owner", "wrong"), follow_redirects=False).status_code == 303
     r = c.get("/archive", auth=("owner", "s3cret"))
     assert r.status_code == 200 and "Every card (1)" in r.text
+
+
+def test_password_form_sets_session(monkeypatch):
+    c = client(monkeypatch)
+    assert "Wrong password" in c.post("/archive/login", data={"password": "nope"}).text
+    r = c.post("/archive/login", data={"password": "s3cret"}, follow_redirects=False)
+    assert r.status_code == 303 and "scout_session" in r.headers["set-cookie"]
+
+
+def test_whatsapp_link_signs_in_and_expires(monkeypatch):
+    c = client(monkeypatch)
+    link = archive.login_link("https://x")
+    token = link.split("t=")[1]
+    r = c.get("/archive/login", params={"t": token}, follow_redirects=False)
+    assert r.status_code == 303 and "scout_session" in r.headers["set-cookie"]
+    assert "expired" in c.get("/archive/login", params={"t": "123.abc"}).text
+    assert not archive.check_token("link", token.replace(token.split(".")[0], "1"))  # tampered expiry
 
 
 def test_html_is_escaped(monkeypatch):
@@ -55,3 +73,4 @@ def test_html_is_escaped(monkeypatch):
 
 def test_archive_off_without_secret(monkeypatch):
     assert client(monkeypatch, pw=None).get("/archive", auth=("x", "")).status_code == 401
+    assert not archive.check_token("link", archive.make_token("link", 60))

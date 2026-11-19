@@ -29,9 +29,11 @@ idea <name>: an idea's assumptions and status
 drop <idea>: <reason>: drop an idea
 kit <idea>: validation kit
 watch <sector> <stage> <country> or watch <company>
-watches / unwatch <number>"""
+watches / unwatch <number>
+archive: a sign-in link to your private web archive"""
 
 NOT_CHAT = "I only answer questions about your cards and saved ideas."
+ARCHIVE_BASE = ""
 UNKNOWN = "I don't know that one. Send help for the list of commands."
 
 
@@ -221,7 +223,36 @@ def edit_list(conn, key: str, action: str, value: str) -> None:
 
 # ---------------------------------------------------------------- dispatcher
 
-BUTTONS = {"card": open_card, "save": save_card, "skip": skip_card, "more": more_card}
+def explore_startup(conn, startup_id: int) -> None:
+    """A "More to explore" row: open its card, writing it first if needed (Hydrogen, 'explore' job)."""
+    from scout import cards as cards_mod
+    from scout.run import today_dhaka
+
+    c = conn.execute("select id from cards where startup_id = %s and kind = 'card' order by id desc limit 1",
+                     (startup_id,)).fetchone()
+    if c is None:
+        sc = conn.execute("select scores_json from scores where startup_id = %s order by created_at desc limit 1",
+                          (startup_id,)).fetchone()
+        if sc is None:
+            reply(conn, "I can't find that startup any more.")
+            return
+        j = sc["scores_json"]
+        market = "bangladesh" if j.get("bangladesh", 0) >= j.get("global", 0) else "global"
+        reply(conn, "Writing this card. This takes a few minutes.")
+        try:
+            res = cards_mod.write_cards(conn, [({"startup_id": startup_id}, market)], today_dhaka(), set(),
+                                        job="explore")
+        except Exception:
+            res = {"card_ids": []}
+        if not res["card_ids"]:
+            reply(conn, "Sorry, I couldn't write that card right now (the AI models are busy). Try again later.")
+            return
+        open_card(conn, res["card_ids"][0])
+        return
+    open_card(conn, c["id"])
+
+
+BUTTONS = {"card": open_card, "save": save_card, "skip": skip_card, "more": more_card, "startup": explore_startup}
 
 
 def handle(conn, msg: dict) -> None:
@@ -260,6 +291,12 @@ def handle(conn, msg: dict) -> None:
         return
     if low == "settings":
         settings_text(conn)
+        return
+    if low in ("archive", "web", "website"):
+        from scout.archive import login_link
+
+        reply(conn, "Your private archive (link works for 15 minutes, then you stay signed in for 30 days on this "
+                    "phone):\n" + login_link(ARCHIVE_BASE))
         return
     m = re.fullmatch(r"time\s+(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?", low)
     if m:

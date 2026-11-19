@@ -4,7 +4,10 @@
   /archive/card/<id>  one card with its deep dives and validation kits
   /archive/notebook   the notebook board (Exploring / Testing / Promising / Dropped), with private notes
 
-HTTP Basic auth: any username, password = ARCHIVE_PASSWORD (Modal secret). Without the secret, the archive is off.
+Sign-in (owner only):
+  - WhatsApp: send `archive` to the bot -> a sign-in link valid 15 minutes -> a 30-day cookie on that phone.
+  - Browser: /archive/login with the password (ARCHIVE_PASSWORD in the Modal secret / .env).
+  - HTTP Basic auth still works for scripts. Without ARCHIVE_PASSWORD the archive is off.
 """
 from __future__ import annotations
 
@@ -12,13 +15,47 @@ import html
 import re
 import secrets
 
-from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+import base64
+import hashlib
+import hmac
+import time
+
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from scout.config import env
 
-security = HTTPBasic(realm="Startup Scout")
+security = HTTPBasic(realm="Startup Scout", auto_error=False)
+COOKIE = "scout_session"
+LINK_TTL = 15 * 60
+SESSION_TTL = 30 * 24 * 3600
+
+
+def _sign(purpose: str, exp: int) -> str:
+    key = (env("ARCHIVE_PASSWORD") or "").encode()
+    return hmac.new(key, f"{purpose}:{exp}".encode(), hashlib.sha256).hexdigest()[:40]
+
+
+def make_token(purpose: str, ttl: int) -> str:
+    exp = int(time.time()) + ttl
+    return f"{exp}.{_sign(purpose, exp)}"
+
+
+def check_token(purpose: str, token: str | None) -> bool:
+    if not token or "." not in token or not env("ARCHIVE_PASSWORD"):
+        return False
+    exp_s, sig = token.split(".", 1)
+    return exp_s.isdigit() and int(exp_s) > time.time() and hmac.compare_digest(sig, _sign(purpose, int(exp_s)))
+
+
+def login_link(base_url: str) -> str:
+    """A one-time-ish sign-in link for the owner (sent only over WhatsApp, valid 15 minutes)."""
+    return f"{base_url.rstrip('/')}/archive/login?t={make_token('link', LINK_TTL)}"
+
+
+class NotSignedIn(Exception):
+    pass
 
 CSS = """
 :root{--bg:#fafaf8;--fg:#1c1c1a;--muted:#6b6b66;--line:#e2e2dc;--card:#fff;--accent:#0b6e4f}
@@ -37,10 +74,15 @@ padding:8px 0}.muted{color:var(--muted);font-size:13px}
 """
 
 
-def require_password(creds: HTTPBasicCredentials = Depends(security)) -> None:
+def require_password(request: Request, creds: HTTPBasicCredentials | None = Depends(security)) -> None:
     pw = env("ARCHIVE_PASSWORD")
-    if not pw or not secrets.compare_digest(creds.password.encode(), pw.encode()):
-        raise HTTPException(status_code=401, headers={"WWW-Authenticate": "Basic"})
+    if not pw:
+        raise HTTPException(status_code=401)
+    if check_token("session", request.cookies.get(COOKIE)):
+        return
+    if creds and secrets.compare_digest(creds.password.encode(), pw.encode()):
+        return
+    raise NotSignedIn()
 
 
 def _page(title: str, body: str) -> HTMLResponse:
@@ -56,7 +98,39 @@ def _linkify(text: str) -> str:
     return re.sub(r"(https?://[^\s<]+)", r'<a href="\1" rel="noreferrer" target="_blank">\1</a>', t)
 
 
+def _signed_in_response(target: str = "/archive") -> RedirectResponse:
+    r = RedirectResponse(target, status_code=303)
+    r.set_cookie(COOKIE, make_token("session", SESSION_TTL), max_age=SESSION_TTL, httponly=True, secure=True,
+                 samesite="lax", path="/archive")
+    return r
+
+
+LOGIN_FORM = """<h1>Sign in</h1><p class="muted">On your phone: send <strong>archive</strong> to the bot on WhatsApp
+and tap the link. On a computer: enter the archive password (ARCHIVE_PASSWORD in your .env file).</p>
+<form method="post" action="/archive/login"><input type="password" name="password" placeholder="Password"
+autocomplete="current-password" required><input type="submit" value="Sign in"></form>{error}"""
+
+
 def add_routes(app: FastAPI, connect) -> None:
+    @app.exception_handler(NotSignedIn)
+    def _to_login(request: Request, exc: NotSignedIn):
+        return RedirectResponse("/archive/login", status_code=303)
+
+    @app.get("/archive/login", response_class=HTMLResponse)
+    def login_page(t: str | None = None):
+        if t is not None:
+            if check_token("link", t):
+                return _signed_in_response()
+            return _page("Sign in", LOGIN_FORM.format(error="<p>That link has expired. Send archive to the bot "
+                                                            "for a new one.</p>"))
+        return _page("Sign in", LOGIN_FORM.format(error=""))
+
+    @app.post("/archive/login", response_class=HTMLResponse)
+    def login_submit(password: str = Form("")):
+        pw = env("ARCHIVE_PASSWORD")
+        if pw and secrets.compare_digest(password.encode(), pw.encode()):
+            return _signed_in_response()
+        return _page("Sign in", LOGIN_FORM.format(error="<p>Wrong password.</p>"))
     @app.get("/archive", response_class=HTMLResponse, dependencies=[Depends(require_password)])
     def cards(q: str = "", market: str = "", country: str = "", sector: str = "", min_score: int = Query(0, alias="min"),
               status: str = ""):

@@ -8,6 +8,9 @@ digest_time: "08:00"
 digest_mix: {bangladesh: 3, global: 2}
 min_score: 6
 min_feasibility: 5    # a pick must be buildable by 2-3 people in ~2 months
+# Variety (owner, 2026-11-19: "many startups, not only AI"): picks come from different broad sectors, at most
+# 2 AI-first products among them, and the digest adds "More to explore" rows from other sectors (cards on tap).
+diversity: {max_ai_native_picks: 2, explore_rows: 5, explore_min_score: 5}
 
 owner:
   skills: [AI and machine learning, Python, web apps]
@@ -21,7 +24,7 @@ skip_list:
   - space
   - biotech wet labs
 
-ai_angle: {show: true, boost: 0.5}
+ai_angle: {show: true, boost: 0.2}   # AI is one angle, not a filter (owner, 2026-11-19)
 weights: {pain: 1.0, why_now: 0.8, feasibility: 1.0, fits_you: 0.7}
 
 # Which model does each job first (owner, 2026-11-19: Hydrogen is first priority wherever it fits).
@@ -34,6 +37,7 @@ jobs:
   deep_dive: hydrogen     # "More" button
   friday: hydrogen        # Friday report deep dive
   ask: hydrogen           # questions about public cards (private notes always go to Qwen)
+  explore: hydrogen       # a card written on demand when the owner taps a "More to explore" row
   kit: hydrogen           # validation kit from a public card (with private notes -> Qwen)
 
 # Model settings. IDs are pinned and stored on every card.

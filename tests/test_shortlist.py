@@ -48,3 +48,29 @@ def test_rank_value_nudge_is_bounded_and_ai_boost_applies():
     assert rank_value(7, hi, False, CFG) <= 8.0
     assert rank_value(7, lo, False, CFG) >= 6.0
     assert rank_value(7, hi, True, CFG) == rank_value(7, hi, False, CFG) + 0.5
+
+
+def ai_row(i, sector, bd, gl, ai=False, feas=7, buzz=1):
+    return {"startup_id": i, "category": sector, "sector": sector, "ai_native": ai, "bd": bd, "gl": gl,
+            "rank_bd": bd, "rank_global": gl, "buzz": buzz, "feas": feas}
+
+
+def test_at_most_two_ai_native_picks_and_sectors_differ():
+    rows = [ai_row(1, "marketing and sales", 9, 8, ai=True), ai_row(2, "real estate and construction", 9, 7, ai=True),
+            ai_row(3, "developer tools and AI infrastructure", 8, 9, ai=True), ai_row(4, "health", 8, 9, ai=True),
+            ai_row(5, "fintech", 7, 5), ai_row(6, "logistics and mobility", 6, 7), ai_row(7, "education", 6, 6)]
+    sl = shortlist(rows, {"bangladesh": 3, "global": 2}, 6, max_ai_native=2)
+    picks = sl["bangladesh"] + sl["global"]
+    assert sum(r["ai_native"] for r in picks) <= 2
+    assert len({r["sector"] for r in picks}) == len(picks) == 5
+
+
+def test_explore_adds_other_sectors_non_ai_first():
+    rows = [ai_row(1, "fintech", 9, 3), ai_row(2, "health", 3, 9),
+            ai_row(3, "fintech", 6, 4), ai_row(4, "agriculture and food", 5, 3),
+            ai_row(5, "travel and hospitality", 5, 5, ai=True), ai_row(6, "education", 3, 5), ai_row(7, "media and creators", 2, 3)]
+    sl = shortlist(rows, {"bangladesh": 1, "global": 1}, 6, reserve=0, explore_rows=3, explore_min_score=5)
+    ids = [r["startup_id"] for r in sl["explore"]]
+    assert 3 not in ids                      # same sector as a pick
+    assert 7 not in ids                      # below the explore minimum
+    assert ids[:2] == [4, 6] and ids[2] == 5 # non-AI first, then the AI one

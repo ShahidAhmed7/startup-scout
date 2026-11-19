@@ -69,7 +69,7 @@ def classify(status: int, body: str) -> str:
 
 
 GOOGLE_ALIASES = ("hydrogen", "flash_lite", "gemma")  # models served by the Gemini API
-CHAT_KINDS = {"deep_dive", "ask", "kit", "test"}  # owner-initiated: may use the reserved Hydrogen calls
+CHAT_KINDS = {"deep_dive", "ask", "kit", "explore", "test"}  # owner-initiated: may use the reserved Hydrogen calls
 
 
 def model_cfg(alias: str) -> dict:

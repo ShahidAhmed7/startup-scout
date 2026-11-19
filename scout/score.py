@@ -89,12 +89,16 @@ def score(conn, ids: list[int], run_date) -> dict:
                      confidence, run_date, category, skip, rank_bd, rank_global)
                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (sid, out.model_id, json.dumps(sc | {"search_phrase": r.get("search_phrase", ""),
-                                                     "ai_angle_strong": bool(r.get("ai_angle_strong"))}),
+                                                     "ai_angle_strong": bool(r.get("ai_angle_strong")),
+                                                     "sector": r.get("sector") or "other",
+                                                     "ai_native": bool(r.get("ai_native"))}),
                  json.dumps(r["reasons"]), r["money_to_start"], r["ai_angle"], r["confidence"], run_date,
                  (r["category"] or "").strip().lower()[:60], bool(r["skip"]),
                  rank_value(sc["bangladesh"], sub, r.get("ai_angle_strong", False), cfg),
                  rank_value(sc["global"], sub, r.get("ai_angle_strong", False), cfg)))
-            conn.execute("update startups set category = %s where id = %s", ((r["category"] or "")[:60], sid))
+            # the startup's category = its broad sector (used for variety, the archive and funding snapshots)
+            conn.execute("update startups set category = %s where id = %s",
+                         ((r.get("sector") or r["category"] or "")[:60], sid))
             stats["scored"] += 1
             if r["skip"]:
                 stats["skipped"] += 1
@@ -115,42 +119,73 @@ def buzz(conn, sid: int) -> float:
     return row["n"] + row["pts"] / 100.0
 
 
-def shortlist(rows: list[dict], mix: dict, min_score: int, reserve: int = 3, min_feasibility: int = 0) -> dict:
-    """rows: [{startup_id, category, bd, gl, rank_bd, rank_global, buzz}] (not skipped).
-    Top `mix['bangladesh']` by Bangladesh score and `mix['global']` by global score, each >= min_score,
-    no two picks from the same category, tie-break on buzz. Plus up to `reserve` extras."""
-    rows = [r for r in rows if r.get("feas", 10) >= min_feasibility]
+def shortlist(rows: list[dict], mix: dict, min_score: int, reserve: int = 3, min_feasibility: int = 0,
+              max_ai_native: int | None = None, explore_rows: int = 0, explore_min_score: int = 5) -> dict:
+    """rows: [{startup_id, sector, ai_native, bd, gl, rank_bd, rank_global, buzz, feas}] (not skipped).
+
+    Picks: top `mix['bangladesh']` by Bangladesh score and `mix['global']` by global score, each >= min_score and
+    feasibility >= min_feasibility; every pick from a DIFFERENT broad sector; at most `max_ai_native` AI-first
+    products; tie-break on buzz. Explore: up to `explore_rows` more startups (score >= explore_min_score) from
+    sectors not used yet, non-AI first, to show the breadth of what got funded. Reserve: spare picks."""
+    feasible = [r for r in rows if r.get("feas", 10) >= min_feasibility]
     used_ids: set[int] = set()
-    used_cats: set[str] = set()
+    used_sectors: set[str] = set()
+    ai_used = [0]
+
+    def sector(r) -> str:
+        return (r.get("sector") or r.get("category") or "").lower()
+
+    def ok(r) -> bool:
+        if r["startup_id"] in used_ids:
+            return False
+        if sector(r) and sector(r) != "other" and sector(r) in used_sectors:
+            return False
+        return not (max_ai_native is not None and r.get("ai_native") and ai_used[0] >= max_ai_native)
+
+    def take(r) -> None:
+        used_ids.add(r["startup_id"])
+        if sector(r):
+            used_sectors.add(sector(r))
+        if r.get("ai_native"):
+            ai_used[0] += 1
 
     def pick(key_rank: str, key_score: str, n: int) -> list[dict]:
         out = []
-        for r in sorted(rows, key=lambda r: (r[key_rank], r["buzz"]), reverse=True):
+        for r in sorted(feasible, key=lambda r: (r[key_rank], r["buzz"]), reverse=True):
             if len(out) >= n:
                 break
-            if r[key_score] < min_score or r["startup_id"] in used_ids:
-                continue
-            cat = (r["category"] or "").lower()
-            if cat and cat in used_cats:
-                continue
-            out.append(r)
-            used_ids.add(r["startup_id"])
-            if cat:
-                used_cats.add(cat)
+            if r[key_score] >= min_score and ok(r):
+                out.append(r)
+                take(r)
         return out
 
     bd = pick("rank_bd", "bd", mix.get("bangladesh", 3))
     gl = pick("rank_global", "gl", mix.get("global", 2))
-    extra = [r for r in sorted(rows, key=lambda r: (max(r["rank_bd"], r["rank_global"]), r["buzz"]), reverse=True)
+    best = lambda r: (max(r["rank_bd"], r["rank_global"]), r["buzz"])
+    extra = [r for r in sorted(feasible, key=best, reverse=True)
              if r["startup_id"] not in used_ids and max(r["bd"], r["gl"]) >= min_score][:reserve]
-    return {"bangladesh": bd, "global": gl, "reserve": extra}
+    explore: list[dict] = []
+    for r in sorted(rows, key=lambda r: (not r.get("ai_native"), *best(r)), reverse=True):
+        if len(explore) >= explore_rows:
+            break
+        if max(r["bd"], r["gl"]) < explore_min_score or r["startup_id"] in used_ids or r in extra:
+            continue
+        if sector(r) and sector(r) != "other" and sector(r) in used_sectors:
+            continue
+        explore.append(r)
+        used_ids.add(r["startup_id"])
+        if sector(r):
+            used_sectors.add(sector(r))
+    return {"bangladesh": bd, "global": gl, "reserve": extra, "explore": explore}
 
 
 def todays_rows(conn, run_date) -> list[dict]:
     rows = conn.execute(
         """select distinct on (sc.startup_id) sc.startup_id, sc.category, sc.rank_bd, sc.rank_global,
              (sc.scores_json->>'bangladesh')::int as bd, (sc.scores_json->>'global')::int as gl,
-             (sc.scores_json->>'feasibility')::int as feas
+             (sc.scores_json->>'feasibility')::int as feas,
+             coalesce(sc.scores_json->>'sector', sc.category) as sector,
+             coalesce((sc.scores_json->>'ai_native')::boolean, false) as ai_native
            from scores sc where sc.run_date = %s and not sc.skip
            order by sc.startup_id, sc.created_at desc""", (run_date,)).fetchall()
     for r in rows:

@@ -26,6 +26,23 @@ def _row(conn, cid: int, market: str) -> dict:
             "description": clip(f"{clip(what, 38)} · {c['country'] or '?'} · {round_txt}", 72)}
 
 
+def _explore_row(conn, sid: int) -> dict:
+    c = conn.execute(
+        """select s.id, s.name, s.country, s.category, sc.scores_json, r.stage, r.amount_text
+           from startups s
+           left join lateral (select * from scores where startup_id = s.id order by created_at desc limit 1) sc on true
+           left join lateral (select * from rounds where startup_id = s.id order by created_at desc limit 1) r on true
+           where s.id = %s""", (sid,)).fetchone()
+    sj = c["scores_json"] or {}
+    bd, gl = sj.get("bangladesh", 0), sj.get("global", 0)
+    label = f"BD {bd}" if bd >= gl else f"Global {gl}"
+    round_txt = " ".join(x for x in [c["stage"], c["amount_text"]] if x) or "round unknown"
+    what = (sj.get("search_phrase") or c["category"] or "").rstrip(".")
+    what = what[:1].upper() + what[1:]
+    return {"id": f"startup:{sid}", "title": row_title(c["name"], label),
+            "description": clip(f"{clip(what, 34)} · {c['country'] or '?'} · {round_txt}", 72)}
+
+
 def _money(usd) -> str:
     usd = float(usd)
     return f"${usd / 1e9:.1f}B" if usd >= 1e9 else f"${usd / 1e6:.0f}M" if usd >= 1e6 else f"${usd / 1e3:.0f}K"
@@ -62,12 +79,13 @@ def funding_snapshot(conn, since) -> str:
     return line + "."
 
 
-def body_text(scored: int, skipped: int, skip_reasons: dict, k: int, notes: list[str], world: str = "") -> str:
+def body_text(scored: int, skipped: int, skip_reasons: dict, k: int, notes: list[str], world: str = "",
+              explore: int = 0) -> str:
     top = [r for r, _ in sorted(skip_reasons.items(), key=lambda x: -x[1])[:3]]
     skipped_txt = f"skipped {skipped} ({', '.join(top)})" if skipped and top else f"skipped {skipped}"
     if k:
         body = (f"Good morning. I read {scored} new startups overnight and {skipped_txt}. "
-                f"Here are your {k} picks.")
+                f"Here are your {k} picks" + (f", plus {explore} more to explore from other sectors." if explore else "."))
     else:
         body = (f"Good morning. I read {scored} new startups overnight and {skipped_txt}. "
                 f"None scored 6 or more today, so there are no picks.")
@@ -79,14 +97,18 @@ def body_text(scored: int, skipped: int, skip_reasons: dict, k: int, notes: list
 
 
 def build(conn, run_date: date, picks: list[tuple[int, str]], stats: dict, notes: list[str] | None = None,
-          funding_since=None) -> dict:
+          funding_since=None, explore: list[int] | None = None) -> dict:
     """picks: [(card_id, market)]. Stores/updates the digest for run_date as 'prepared' (unless already sent)."""
     sections = [{"title": "For Bangladesh", "rows": [_row(conn, c, m) for c, m in picks if m == "bangladesh"]},
                 {"title": "Global from Bangladesh", "rows": [_row(conn, c, m) for c, m in picks if m == "global"]}]
+    room = 10 - sum(len(s["rows"]) for s in sections)  # WhatsApp lists hold 10 rows in total
+    explore = (explore or [])[:max(0, room)]
+    if explore:
+        sections.append({"title": "More to explore", "rows": [_explore_row(conn, sid) for sid in explore]})
     sections = [s for s in sections if s["rows"]]
     world = funding_snapshot(conn, funding_since) if funding_since else ""
     body = body_text(stats.get("found", stats.get("scored", 0)), stats.get("skipped", 0),
-                     stats.get("skip_reasons", {}), len(picks), notes or [], world)
+                     stats.get("skip_reasons", {}), len(picks), notes or [], world, len(explore))
     data = {"body": body, "button": "See picks", "sections": sections}
     existing = conn.execute("select id, status from digests where date = %s", (run_date,)).fetchone()
     if existing and existing["status"] == "sent":
