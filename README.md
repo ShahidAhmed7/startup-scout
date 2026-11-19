@@ -91,135 +91,181 @@ provider is unavailable. Built-in budget controls keep the system on free tiers.
 
 ### System overview
 
-```mermaid
-flowchart LR
-    subgraph SRC["Data sources"]
-        direction TB
-        RSS["Regional funding feeds<br/>US, Europe, India, Pakistan,<br/>Middle East, Africa, SE Asia,<br/>China, Bangladesh"]
-        API["Structured APIs<br/>YC directory · Hacker News"]
-        GN["Google News<br/>regional searches"]
-        TM["TrustMRR<br/>verified-revenue startups"]
-        FC["Firecrawl<br/>for sites that block crawlers"]
-    end
+One serverless application on Modal runs the schedule, the daily pipeline, the WhatsApp webhook and a self-hosted fallback model; Supabase holds the state.
 
-    subgraph MODAL["Modal serverless app"]
-        direction TB
-        TICK["tick<br/>scheduler, every 15 min"]
-        PIPE["pipeline<br/>daily batch job"]
-        WEB["web<br/>FastAPI: webhook + archive"]
-        WORK["handle_message<br/>async worker"]
-        REP["friday / monthly<br/>reports"]
-        QW["Qwen 3.6 27B on A100<br/>vLLM, scale-to-zero"]
-    end
-
-    subgraph AI["AI providers"]
-        direction TB
-        HY["Gemini 4 Hydrogen<br/>judgement"]
-        FL["Gemini Flash-Lite<br/>bulk extraction"]
-        GM["Gemma 4<br/>fallback"]
-        EMB["Gemini embeddings<br/>taste learning"]
-    end
-
-    DB[("Supabase Postgres<br/>private schema · RLS · pgvector")]
-    SRCH["Live web research<br/>search + company homepages"]
-    WA["WhatsApp Cloud API"]
-    OWNER(["Owner's phone"])
-    ARCH(["Private web archive"])
-
-    SRC --> PIPE
-    TICK -->|spawns| PIPE
-    TICK -->|spawns| REP
-    PIPE <--> DB
-    PIPE --> SRCH
-    PIPE --> AI
-    PIPE -.->|last resort| QW
-    TICK -->|digest inside the 24h window| WA
-    WA --> OWNER
-    OWNER -->|replies and button taps| WA
-    WA -->|signed webhook| WEB
-    WEB -->|spawns| WORK
-    WORK <--> DB
-    WORK --> AI
-    WORK -->|private notes only| QW
-    WORK --> WA
-    WEB --> ARCH
-    REP --> WA
+```text
+  DATA SOURCES
+  ┌────────────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
+  │ Regional funding   │ │ YC directory │ │ Hacker News  │ │ Google News  │ │ TrustMRR         │
+  │ feeds, worldwide   │ │ new batches  │ │ launches     │ │ by region    │ │ verified revenue │
+  └─────────┬──────────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └────────┬─────────┘
+            └───────────────────┴────────────────┼────────────────┴──────────────────┘
+                                                 │  Firecrawl reads sites that block crawlers
+                                                 │
+  MODAL · SERVERLESS APPLICATION                 ▼
+  ┌────────────────────┐  spawns  ┌──────────────────────────────┐  calls   ┌───────────────────────────┐
+  │ tick               ├─────────►│ pipeline                     ├─────────►│ AI providers              │
+  │ scheduler          │          │ collect · extract · merge    │          │ Gemini 4 Hydrogen: judge  │
+  │ digest timing,     │          │ score · shortlist · research │          │ Gemini Flash-Lite: read   │
+  │ reports, budget    │          │ cards · fact gate · digest   │          │ Gemma 4: fallback         │
+  └─────────┬──────────┘          └──────────────┬───────────────┘          └─────────────┬─────────────┘
+            │                                    │ reads / writes                         │ last resort
+            │                                    ▼                                        ▼
+            │                     ┌──────────────────────────────┐          ┌───────────────────────────┐
+            │                     │ Supabase Postgres            │          │ Qwen on dedicated GPU     │
+            │                     │ private schema · row-level   │          │ self-hosted · vLLM        │
+            │                     │ security · pgvector          │          │ the only model for notes  │
+            │                     └──────────────▲───────────────┘          └─────────────▲─────────────┘
+            │                                    │ reads / writes                         │ private notes
+            │                     ┌──────────────┴───────────────┐  spawns  ┌─────────────┴─────────────┐
+            │                     │ web · FastAPI                ├─────────►│ message worker            │
+            │                     │ signed webhook               │          │ commands · buttons ·      │
+            │                     │ private web archive          │          │ notebook · watches        │
+            │                     └──────────────▲───────────────┘          └─────────────┬─────────────┘
+            │ morning digest                     │ signed events                          │ replies
+            ▼                                    │                                        ▼
+  ┌──────────────────────────────────────────────┴────────────────────────────────────────────────────┐
+  │                        WHATSAPP CLOUD API  ◄──────────────►  OWNER'S PHONE                        │
+  └───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Daily pipeline
 
-```mermaid
-flowchart TB
-    A["Collect<br/>polite RSS/API fetch, conditional GET,<br/>per-host rate limits, Firecrawl fallback"] --> B["Pre-filter<br/>multilingual funding keywords, no AI"]
-    B --> C["Extract<br/>Flash-Lite, batches of articles,<br/>both API keys in parallel;<br/>translation to English"]
-    A -->|already structured| C2["YC + TrustMRR records"]
-    C --> D["Merge duplicates<br/>domain → normalised name → core name;<br/>one round per raise"]
-    C2 --> D
-    D --> E["Select candidates<br/>new startups and new rounds;<br/>YC / US priority, then buzz"]
-    E --> F["Score twice: Bangladesh + Global<br/>Hydrogen, structured JSON,<br/>rubric with hard caps;<br/>skip-list filter"]
-    F --> G["Taste learning<br/>embeddings of saves vs skips,<br/>bounded nudge"]
-    G --> H["Shortlist<br/>min score + feasibility, distinct sectors,<br/>AI-first cap, confidence penalty;<br/>reserve + explore rows"]
-    H --> I["Research<br/>live web search for local competitors,<br/>failure search, homepage text"]
-    I --> J["Write cards<br/>Hydrogen, one per pick, in parallel"]
-    J --> K{"Fact gate<br/>every name and figure<br/>found in sources?"}
-    K -->|no| K2["Remove unsupported sentence"] --> L
-    K -->|yes| L{"After-research score<br/>still above threshold?"}
-    L -->|no| M["Swap in reserve pick"] --> J
-    L -->|yes| N["Prepare digest<br/>picks, explore rows,<br/>worldwide funding snapshot,<br/>source-health notes"]
-    N --> O["Watch alerts"] --> P["Quality audit<br/>hard rules, duplicates, facts, links"]
+Every stage is automated; AI is used only where judgement is needed, and two safety checks run before anything is sent.
+
+```text
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ COLLECT      polite RSS and API fetching · conditional requests ·    │
+  │              per-host rate limits · Firecrawl for blocked sites      │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ PRE-FILTER   multilingual funding keywords, no AI cost               │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ EXTRACT      Flash-Lite reads articles in batches on both keys,      │
+  │              translates to English, pulls company, round, investors  │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ MERGE        same website or name = one startup, one round per raise │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ SCORE        Hydrogen scores every startup twice: Bangladesh and     │
+  │              global · hard rubric caps · skip list · taste nudge     │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ SHORTLIST    minimum score and feasibility · one pick per sector ·   │
+  │              cap on AI-first picks · thin-information penalty        │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ RESEARCH     live search for local competitors and past failures,    │
+  │              company homepages                                       │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ WRITE CARDS  Hydrogen, one card per pick, in parallel                │◄─────────────────┐
+  └───────────────────────────────────┬──────────────────────────────────┘                  │
+                                      ▼                                                     │
+  ┌──────────────────────────────────────────────────────────────────────┐                  │
+  │ FACT GATE    every name and figure must appear in the sources,       │                  │
+  │              otherwise the sentence is removed                       │                  │
+  └───────────────────────────────────┬──────────────────────────────────┘                  │
+                                      ▼                                                     │
+  ┌──────────────────────────────────────────────────────────────────────┐  score dropped   │
+  │ RE-CHECK     re-score after research                                 ├──────────────────┘
+  │                                                                      │  swap in reserve
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ DELIVER      digest · explore rows · worldwide funding snapshot ·    │
+  │              watch alerts · quality audit                            │
+  └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### AI routing and fallback
 
-```mermaid
-flowchart LR
-    REQ["Job request<br/>extract · score · card · deep dive ·<br/>kit · ask · note"] --> PRIV{"Contains<br/>private notes?"}
-    PRIV -->|yes| QWEN["Qwen on Modal GPU<br/>self-hosted, never leaves<br/>our infrastructure"]
-    PRIV -->|no| JOB["Model assigned to the job<br/>Hydrogen first, Flash-Lite for bulk"]
+Private data never reaches a third-party provider, and the briefing keeps running when a provider is unavailable.
 
-    subgraph KEYS["Two API keys in parallel"]
-        direction TB
-        K1["Main key"]
-        K2["Backup key"]
-    end
-
-    JOB --> KEYS
-    KEYS -->|both fail: quota, cap,<br/>overload, auth| FL2["Flash-Lite"]
-    FL2 -->|both keys fail| GEM["Gemma 4"]
-    GEM -->|both keys fail| BUD{"Budget guard<br/>GPU allowed?"}
-    BUD -->|yes| QWEN
-    BUD -->|no| SKIP["Graceful degradation:<br/>'skipped today' notice"]
-
-    KEYS -.-> CTRL["Per-key controls:<br/>daily caps, requests-per-minute spacing,<br/>concurrency slots, usage logging,<br/>retry on overload, schema validation"]
+```text
+                                ┌────────────────────────┐
+                                │     AI job request     │
+                                └────────────┬───────────┘
+                                             ▼
+                                ┌────────────────────────┐    yes    ┌──────────────────────────────┐
+                                │ uses private notes?    ├──────────►│ Qwen on our own GPU          │
+                                └────────────┬───────────┘           │ data never leaves our infra  │
+                                             │ no                    └──────────────▲───────────────┘
+                                             ▼                                      │
+  ┌────────────────────────────────────────────────────────────────┐                │
+  │ ASSIGNED MODEL                                                 │                │
+  │ ┌──────────────────────┐   in parallel  ┌───────────────────┐  │                │
+  │ │ main key             │◄──────────────►│ backup key        │  │                │
+  │ └──────────────────────┘                └───────────────────┘  │                │
+  │ daily caps · rate spacing · retries · schema validation · log  │                │
+  └────────────────────────────────┬───────────────────────────────┘                │
+                                   │ both keys fail                                 │
+                                   ▼                                                │
+                      ┌────────────────────────┐                                    │
+                      │ Gemini Flash-Lite      │                                    │
+                      └────────────┬───────────┘                                    │
+                                   │ both keys fail                                 │
+                                   ▼                                                │
+                      ┌────────────────────────┐                                    │
+                      │ Gemma 4                │                                    │
+                      └────────────┬───────────┘                                    │
+                                   │ both keys fail                                 │
+                                   ▼                                                │
+                      ┌────────────────────────┐    within budget                   │
+                      │ budget guard           ├────────────────────────────────────┘
+                      └────────────┬───────────┘
+                                   │ over budget
+                                   ▼
+                      ┌────────────────────────┐
+                      │ "skipped today" notice │
+                      └────────────────────────┘
 ```
 
 ### WhatsApp message lifecycle
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant O as Owner
-    participant M as Meta WhatsApp Cloud API
-    participant W as web (FastAPI)
-    participant DB as Postgres
-    participant H as handle_message worker
-    participant L as AI router
+The webhook answers within seconds; the real work happens in an asynchronous worker, exactly once per message.
 
-    O->>M: Message or button tap
-    M->>W: POST /webhook (X-Hub-Signature-256)
-    W->>W: Verify HMAC signature, drop non-owner numbers
-    W->>DB: Store message (unique message id = idempotency)
-    W->>DB: Update 24-hour window timestamp
-    W-->>M: 200 OK within seconds
-    W->>H: Spawn async job
-    H->>DB: Claim message exactly once
-    H->>M: Flush pending digest and queued reports first
-    H->>H: Route: command, button, notebook, watch
-    H->>L: Generate deep dive, kit or answer when needed
-    L-->>H: Validated structured output
-    H->>DB: Save card, signal, idea or note
-    H->>M: Reply (text, buttons or list, within WhatsApp limits)
-    M->>O: Delivered
+```text
+Owner        WhatsApp API     web · FastAPI      Postgres          worker          AI router
+  │                │                │                │                │                │
+  │  message or button tap          │                │                │                │
+  ├────────────────►                │                │                │                │
+  │                │  POST /webhook, signed          │                │                │
+  │                ├────────────────►                │                │                │
+  │                │                ├─ verify signature, ignore other numbers          │
+  │                │                │                │                │                │
+  │                │                │  store once, by message id      │                │
+  │                │                ├────────────────►                │                │
+  │                │                │  move the 24-hour window        │                │
+  │                │                ├────────────────►                │                │
+  │                │  200 OK, within seconds         │                │                │
+  │                ◄────────────────┤                │                │                │
+  │                │                │  spawn async job                │                │
+  │                │                ├─────────────────────────────────►                │
+  │                │                │                │  claim the message exactly once │
+  │                │                │                ◄────────────────┤                │
+  │                │  deliver queued digest first    │                │                │
+  │                ◄──────────────────────────────────────────────────┤                │
+  │                │                │                │                │  deep dive, kit or answer
+  │                │                │                │                ├────────────────►
+  │                │                │                │                │  validated structured output
+  │                │                │                │                ◄────────────────┤
+  │                │                │                │  save card, idea, note or signal
+  │                │                │                ◄────────────────┤                │
+  │                │  reply: text, buttons or list   │                │                │
+  │                ◄──────────────────────────────────────────────────┤                │
+  │  delivered     │                │                │                │                │
+  ◄────────────────┤                │                │                │                │
+  │                │                │                │                │                │
 ```
 
 **Technology:** Google Gemini for analysis, with Gemma and a self-hosted Qwen model as fallbacks; a serverless
