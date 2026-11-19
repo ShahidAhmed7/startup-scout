@@ -1,4 +1,4 @@
-"""Step 9: the prepared 08:00 digest (one interactive list message) — CLAUDE.md section 10."""
+"""Step 9: the prepared 08:00 digest (one interactive list message) — AGENTS.md section 10."""
 from __future__ import annotations
 
 import json
@@ -49,7 +49,7 @@ def _money(usd) -> str:
 
 
 def funding_snapshot(conn, since) -> str:
-    """One line on what got funded worldwide since `since` (CLAUDE.md: the owner wants to see the world)."""
+    """One line on what got funded worldwide since `since` (AGENTS.md: the owner wants to see the world)."""
     rows = conn.execute(
         """select r.stage, r.amount_usd, s.name, s.country, s.category,
              (select src.region from startup_items si join items i on i.id = si.item_id

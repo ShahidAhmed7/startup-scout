@@ -1,4 +1,4 @@
-"""Owner commands and button taps (CLAUDE.md section 10). Everything else gets a one-line reply.
+"""Owner commands and button taps (AGENTS.md section 10). Everything else gets a one-line reply.
 
 Not a general chatbot (hard rule 8): free questions get "I only answer questions about your cards and saved ideas."
 """

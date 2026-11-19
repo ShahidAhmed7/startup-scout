@@ -1,4 +1,4 @@
-"""Qwen on Modal: the private model (hard rule 5) and the last-resort backup (CLAUDE.md section 5).
+"""Qwen on Modal: the private model (hard rule 5) and the last-resort backup (AGENTS.md section 5).
 
 Batch mode: one call starts an A100 80GB container (weights cached in a Modal Volume), runs every prompt,
 and the container shuts down shortly after. The budget guard is checked before every GPU call.

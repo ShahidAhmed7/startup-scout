@@ -1,4 +1,4 @@
-"""Budget guard (CLAUDE.md section 6). Modal's free Starter plan gives $30/month; our ceiling is $25.
+"""Budget guard (AGENTS.md section 6). Modal's free Starter plan gives $30/month; our ceiling is $25.
 
 Estimate = Qwen GPU seconds this month x A100-80GB price + a small CPU allowance.
 - At $20: warn the owner once (queued until the 24-hour window is open).

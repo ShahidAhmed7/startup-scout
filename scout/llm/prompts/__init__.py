@@ -1,4 +1,4 @@
-"""Prompts and JSON schemas for every LLM job. Rubric = CLAUDE.md section 9."""
+"""Prompts and JSON schemas for every LLM job. Rubric = AGENTS.md section 9."""
 from __future__ import annotations
 
 SYSTEM = (

@@ -1,4 +1,4 @@
-"""The daily pipeline (CLAUDE.md section 8).
+"""The daily pipeline (AGENTS.md section 8).
 
   python -m scout.run --dry            # full run, prints today's digest and cards (nothing sent)
   python -m scout.run --dry --dev      # same, but scoring/cards use Flash-Lite to save Hydrogen quota
@@ -81,7 +81,7 @@ def _check_and_swap(conn, cr, picks, reserve, run_date, new_round, cfg, max_swap
 
 
 def health_notes(conn) -> list[str]:
-    """Sources failing 3 days in a row or empty for 7 days, mentioned once (CLAUDE.md section 6)."""
+    """Sources failing 3 days in a row or empty for 7 days, mentioned once (AGENTS.md section 6)."""
     from scout import health
     return health.digest_notes(conn)
 

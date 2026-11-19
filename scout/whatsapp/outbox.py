@@ -1,4 +1,4 @@
-"""Deliver messages to the owner, respecting the 24-hour window (CLAUDE.md section 10).
+"""Deliver messages to the owner, respecting the 24-hour window (AGENTS.md section 10).
 
 - Window open  -> send now.
 - Window closed -> queue (owner_state.pending_queue_json); digests are marked 'pending' instead.

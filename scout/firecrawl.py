@@ -1,6 +1,6 @@
 """Firecrawl (owner's decision, 2026-11-19): read sites that block our plain reader.
 
-Overrides CLAUDE.md rule 9 ("never bypass blocks") at the owner's request; rule 1 still holds: the free plan gives
+Overrides AGENTS.md rule 9 ("never bypass blocks") at the owner's request; rule 1 still holds: the free plan gives
 1,000 credits/month (1 credit per page) and our caps (config.yaml `firecrawl`) stay below it. Without
 FIRECRAWL_API_KEY nothing here runs and those sources are simply skipped.
 """

@@ -1,4 +1,4 @@
-"""One interface for every LLM call (CLAUDE.md section 5):
+"""One interface for every LLM call (AGENTS.md section 5):
 
     complete(job, prompt, schema=..., private=False)
     complete_many(job, prompts, schema=...)      # parallel across both Gemini keys

@@ -1,4 +1,4 @@
-"""Source health (CLAUDE.md section 6): a source that fails 3 runs in a row, or returns nothing for 7 days,
+"""Source health (AGENTS.md section 6): a source that fails 3 runs in a row, or returns nothing for 7 days,
 is mentioned once in the next digest. When it recovers, it can be mentioned again later."""
 from __future__ import annotations
 
