@@ -157,6 +157,11 @@ def daily_report() -> None:
                 "select name from sources where status = 'active' and fail_count >= 3 order by name"
             ).fetchall()
             print(f"   Sources down           {', '.join(r['name'] for r in down) if down else 'none'}")
+            au = repo.last_run(conn, "audit")
+            if au:
+                sm = (au["stats_json"] or {}).get("summary", {})
+                print(f"   Last quality audit     {au['started_at']:%Y-%m-%d %H:%M} UTC: "
+                      + ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in sm.items()))
             from datetime import datetime, timezone
 
             from scout import firecrawl

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from scout.normalize import clean_text, domain_of, norm_name, short_country
+from scout.normalize import clean_text, core_name, domain_of, norm_name, short_country
 
 
 def upsert_startup(conn, c: dict) -> tuple[int, bool]:
@@ -17,6 +17,14 @@ def upsert_startup(conn, c: dict) -> tuple[int, bool]:
         row = conn.execute("select * from startups where domain = %s", (dom,)).fetchone()
     if not row and nn:
         row = conn.execute("select * from startups where norm_name = %s order by id limit 1", (nn,)).fetchone()
+    if not row and nn:
+        # "Genesis AI SAS" / "Genesis AI" / "Genesis": same company unless their websites say otherwise
+        core = core_name(name)
+        for cand in conn.execute("select * from startups where norm_name like %s order by id limit 20",
+                                 (core.split()[0] + "%",)).fetchall():
+            if core_name(cand["name"]) == core and not (dom and cand["domain"] and cand["domain"] != dom):
+                row = cand
+                break
     if row:
         conn.execute(
             """update startups set domain = coalesce(domain, %s), website = coalesce(website, %s),

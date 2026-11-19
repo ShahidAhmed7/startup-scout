@@ -6,6 +6,7 @@ one of the search results we fetched, and only URLs we actually fetched are list
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -61,6 +62,59 @@ def _facts_text(f: dict) -> str:
     if s["yc_batch"]:
         lines.append(f"Y Combinator batch: {s['yc_batch']}")
     return "\n".join(lines)
+
+
+def material_text(f: dict, res: dict) -> str:
+    """Exactly what the card writer sees (used by the writer's prompt and the fact gate)."""
+    news = "\n".join(f"- {i['source']}: {i['title']} | {i['url']} | {(i['summary'] or '')[:800]}" for i in f["items"])
+    return (f"STARTUP FACTS:\n{_facts_text(f)}\n\nNEWS:\n{news or '(none)'}\n\n"
+            f"HOMEPAGE ({res.get('homepage_url') or 'not available'}):\n{(res.get('homepage') or 'unknown')[:5000]}\n\n"
+            f"WEB SEARCH RESULTS:\n{format_results(res.get('search_bd', []))}")
+
+
+_COMMON = {"the", "a", "an", "it", "its", "they", "their", "this", "these", "in", "on", "for", "and", "with", "by",
+           "bangladesh", "bangladeshi", "dhaka", "bkash", "nagad", "facebook", "whatsapp", "google", "ai", "seed",
+           "series", "pre", "arr", "mrr", "ceo", "cto", "usd", "us", "unknown", "no", "local", "small",
+           "january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+           "november", "december"}
+
+
+def _norm(t: str) -> str:
+    return re.sub(r"[^a-z0-9.]+", " ", t.lower().replace(",", ""))
+
+
+def unsupported_anchors(sentence: str, material: str, own_name: str) -> list[str]:
+    """Numbers and proper names in a factual sentence that do not appear in the writer's material."""
+    mat = _norm(material) + " " + _norm(own_name)
+    bad = []
+    for num in re.findall(r"\d[\d,]*(?:\.\d+)?", sentence):
+        n = num.replace(",", "").rstrip(".")
+        if len(n) >= 2 and n not in mat:
+            bad.append(num)
+    words = re.findall(r"(?<![.!?]\s)(?<!^)\b([A-Z][A-Za-z0-9&'-]+(?:\s+[A-Z][A-Za-z0-9&'-]+)*)", sentence)
+    for w in words:
+        parts = [p for p in _norm(w).split() if p and p not in _COMMON]
+        if parts and not all(p in mat.split() or p in mat for p in parts):
+            bad.append(w)
+    return bad
+
+
+def fact_gate(card: dict, material: str, own_name: str, fallback_what: str | None) -> tuple[dict, list[str]]:
+    """Exact check (no AI): in the factual sections, drop sentences whose numbers/names aren't in the material."""
+    fixed, removed = dict(card), []
+    for field in ("what_they_do", "why_funded"):
+        keep = []
+        for sent in re.split(r"(?<=[.!?])\s+", (card.get(field) or "").strip()):
+            bad = unsupported_anchors(sent, material, own_name) if sent else []
+            if bad:
+                removed.append(f"{field}: {sent} (not in sources: {', '.join(bad)})")
+            elif sent:
+                keep.append(sent)
+        text = " ".join(keep)
+        if not text:
+            text = (fallback_what or "unknown") if field == "what_they_do" else "unknown"
+        fixed[field] = text
+    return fixed, removed
 
 
 def card_prompt_for(f: dict, res: dict, market: str) -> tuple[str, set[str], set[str]]:
@@ -155,11 +209,16 @@ def write_cards(conn, picks: list[tuple[dict, str]], run_date: date, new_round_i
     outs = router.complete_many(job, [x[4] for x in prepared], schema=prompts.CARD_SCHEMA,
                                 system=prompts.SYSTEM, conn=conn)
     card_ids, failed, models = [], [], []
-    for (row, market, f, res, _, allowed, search_urls), out in zip(prepared, outs):
+    ok = [(x, out) for x, out in zip(prepared, outs) if not isinstance(out, Exception)]
+    for x, out in zip(prepared, outs):
         if isinstance(out, Exception):
-            failed.append((row["startup_id"], str(out)[:200]))
-            continue
-        data = clean_card(out.data, allowed, search_urls, had_search=bool(res["search_bd"]))
+            failed.append((x[0]["startup_id"], str(out)[:200]))
+    cleaned = [clean_card(out.data, x[5], x[6], had_search=bool(x[3]["search_bd"])) for x, out in ok]
+    gated = [fact_gate(d, material_text(x[2], x[3]), x[2]["startup"]["name"], x[2]["startup"]["description"])
+             for d, (x, _) in zip(cleaned, ok)]
+    for (x, out), (data, removed) in zip(ok, gated):
+        row, market, f, res = x[0], x[1], x[2], x[3]
+        data["fact_gate_removed"] = removed
         data["research"] = {"phrase": res["phrase"], "search_bd": res["search_bd"], "search_fail": res["search_fail"],
                             "homepage_url": res["homepage_url"]}
         text = card_text(f, data, out.model_id, run_date, new_round=row["startup_id"] in new_round_ids)

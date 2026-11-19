@@ -146,7 +146,8 @@ global = could this small team, based in Bangladesh, build a version and sell it
 - 1-4: enterprise sales (banks, hospitals, governments, law firms, large companies), security reviews,
   regulated data (medical, financial), on-site work, or infrastructure that needs big capital.
 
-Hard rules: bangladesh and global may each be at most feasibility + 2. If money_to_start is high, neither may
+Hard rules: if the material does not say what the company sells or does, every score is at most 3 and confidence
+is "low" (you cannot judge an unknown product). bangladesh and global may each be at most feasibility + 2. If money_to_start is high, neither may
 be above 6. An idea is not good just because the funded company is impressive.
 
 AI is ONE angle on every idea, not a filter: never score an idea higher just because it uses AI. Marketplaces,
@@ -386,3 +387,37 @@ Return the full updated list (keep wording stable; add new ones only if the note
 status = holding (evidence supports it), at_risk (evidence against it), untested (no evidence yet);
 evidence_for / evidence_against = how many notes support / contradict it.
 summary: 1-2 sentences on what changed with the latest note."""
+
+
+# ---------------------------------------------------------------- card fact gate (Flash-Lite)
+
+FIX_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+        "what_they_do": {"type": "string"},
+        "why_funded": {"type": "string"},
+        "already_in_bangladesh": {"type": "string"},
+        "score_check_note": {"type": "string"},
+    },
+    "required": ["unsupported_claims", "what_they_do", "why_funded", "already_in_bangladesh", "score_check_note"],
+}
+
+
+def fix_prompt(fields: dict, material: str) -> str:
+    import json as _json
+
+    return f"""You are the fact gate for a startup card. Below are the card's FACTUAL fields and ALL the material the
+writer had. A fact is supported only if the material states it (funding, investors, accelerators like Y Combinator,
+traction, team, what the company does, which companies operate in Bangladesh, market facts like regulations or
+payment habits). Do not use your own knowledge.
+
+1. unsupported_claims: list every claim in these fields that the material does not support ([] if none).
+2. Return each field rewritten with ONLY the unsupported parts removed or replaced by "unknown"; keep everything
+   else word for word. If nothing is unsupported, return the fields unchanged.
+
+FIELDS:
+{_json.dumps(fields, ensure_ascii=False, indent=1)}
+
+MATERIAL:
+{material}"""

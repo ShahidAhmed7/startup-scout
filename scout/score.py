@@ -128,6 +128,7 @@ def shortlist(rows: list[dict], mix: dict, min_score: int, reserve: int = 3, min
     Explore: up to `explore_rows` more startups (score >= explore_min_score) from sectors not used yet, non-AI first.
     `max_ai_native` caps AI-first startups across picks AND explore rows together. It is a maximum, not a quota:
     the digest may contain fewer (or none). Reserve: spare picks."""
+    rows = [r for r in rows if r.get("known", True)]  # never pick or explore a startup whose product is unknown
     feasible = [r for r in rows if r.get("feas", 10) >= min_feasibility]
     used_ids: set[int] = set()
     used_sectors: set[str] = set()
@@ -186,8 +187,9 @@ def todays_rows(conn, run_date) -> list[dict]:
              (sc.scores_json->>'bangladesh')::int as bd, (sc.scores_json->>'global')::int as gl,
              (sc.scores_json->>'feasibility')::int as feas,
              coalesce(sc.scores_json->>'sector', sc.category) as sector,
-             coalesce((sc.scores_json->>'ai_native')::boolean, false) as ai_native
-           from scores sc where sc.run_date = %s and not sc.skip
+             coalesce((sc.scores_json->>'ai_native')::boolean, false) as ai_native,
+             coalesce(nullif(trim(s.description), ''), '') <> '' as known
+           from scores sc join startups s on s.id = sc.startup_id where sc.run_date = %s and not sc.skip
            order by sc.startup_id, sc.created_at desc""", (run_date,)).fetchall()
     for r in rows:
         r["buzz"] = buzz(conn, r["startup_id"])

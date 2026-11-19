@@ -28,6 +28,16 @@ def norm_name(name: str) -> str:
     return " ".join(words)
 
 
+_GENERIC = {"ai", "labs", "lab", "ventures", "technologies", "technology", "tech", "hq", "io", "app", "group",
+            "holdings"}
+
+
+def core_name(name: str) -> str:
+    """norm_name without generic words, for spotting the same company written differently."""
+    n = norm_name(name)
+    return " ".join(w for w in n.split() if w not in _GENERIC) or n
+
+
 def domain_of(url: str | None) -> str | None:
     if not url or not isinstance(url, str):
         return None

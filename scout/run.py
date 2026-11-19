@@ -107,6 +107,11 @@ def run_pipeline(conn, *, skip_collect: bool = False, limit: int | None = None, 
         stats["items"] = stats.get("collect", {}).get("new_items", ex["stats"]["pending"])
         stats["seconds"] = round(time.time() - t0)
         repo.finish_run(conn, run_id, "ok", stats)
+        try:  # quality audit by Flash-Lite + code checks (owner's rule checker); never blocks the digest
+            from scout import audit
+            stats["audit"] = audit.audit(conn, run_date)["summary"]
+        except Exception as e:
+            stats["audit"] = f"error: {type(e).__name__}"
         return stats
     except Exception as e:
         stats["seconds"] = round(time.time() - t0)

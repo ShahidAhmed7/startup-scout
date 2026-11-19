@@ -90,3 +90,19 @@ def test_explore_adds_other_sectors_non_ai_first():
     assert 3 not in ids                      # same sector as a pick
     assert 7 not in ids                      # below the explore minimum
     assert ids[:2] == [4, 6] and ids[2] == 5 # non-AI first, then the AI one
+
+
+def test_unknown_products_are_never_picked_or_explored():
+    rows = [ai_row(1, "fintech", 9, 9), ai_row(2, "health", 8, 8), ai_row(3, "education", 7, 7)]
+    rows[0]["known"] = False
+    sl = shortlist(rows, {"bangladesh": 2, "global": 1}, 6, explore_rows=5, explore_min_score=1)
+    shown = [r["startup_id"] for r in sl["bangladesh"] + sl["global"] + sl["explore"]]
+    assert 1 not in shown and set(shown) == {2, 3}
+
+
+def test_core_name_merges_company_name_variants():
+    from scout.normalize import core_name
+    assert core_name("Genesis AI SAS") == core_name("Genesis AI") == core_name("Genesis") == "genesis"
+    assert core_name("Soket AI Labs") == core_name("Soket AI") == "soket"
+    assert core_name("Unsiloed Inc.") == core_name("Unsiloed AI")
+    assert core_name("Open AI") != core_name("Open Bank")
