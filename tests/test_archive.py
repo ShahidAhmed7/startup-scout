@@ -74,3 +74,13 @@ def test_html_is_escaped(monkeypatch):
 def test_archive_off_without_secret(monkeypatch):
     assert client(monkeypatch, pw=None).get("/archive", auth=("x", "")).status_code == 401
     assert not archive.check_token("link", archive.make_token("link", 60))
+
+
+def test_filter_form_with_empty_fields_works(monkeypatch):
+    """A browser submits every field, empty ones as '' (this broke the Global filter on 2026-11-19)."""
+    c = client(monkeypatch)
+    for params in ({"q": "", "market": "global", "country": "", "sector": "", "min": "", "status": ""},
+                   {"q": "", "market": "bangladesh", "country": "", "sector": "", "min": "7", "status": ""},
+                   {"min": "abc"}):
+        r = c.get("/archive", params=params, auth=("x", "s3cret"))
+        assert r.status_code == 200 and "Every card" in r.text

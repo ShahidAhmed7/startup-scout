@@ -132,8 +132,11 @@ def add_routes(app: FastAPI, connect) -> None:
             return _signed_in_response()
         return _page("Sign in", LOGIN_FORM.format(error="<p>Wrong password.</p>"))
     @app.get("/archive", response_class=HTMLResponse, dependencies=[Depends(require_password)])
-    def cards(q: str = "", market: str = "", country: str = "", sector: str = "", min_score: int = Query(0, alias="min"),
+    def cards(q: str = "", market: str = "", country: str = "", sector: str = "", min_raw: str = Query("", alias="min"),
               status: str = ""):
+        # the browser sends every field, empty ones as "" (e.g. min=), so parse leniently
+        min_score = int(min_raw) if min_raw.strip().isdigit() else 0
+        q, market, country, sector, status = (x.strip() for x in (q, market, country, sector, status))
         where, args = ["c.kind = 'card'"], []
         if q:
             where.append("(s.name ilike %s or s.description ilike %s or c.body ilike %s)")
