@@ -1,91 +1,58 @@
+<div align="center">
+
 # Startup Scout
 
-**Turn the world's startup funding news into ready-to-test business ideas for Bangladesh — delivered to WhatsApp
-every morning.**
+### Turn the world's startup funding news into ready-to-test business ideas for Bangladesh
 
-Every funding round is a signal: an investor has just validated that a problem is real and worth paying to solve.
-Startup Scout captures those signals from around the world, filters out what a small team can't build, and
-translates the rest into concrete opportunities — for the Bangladeshi market and for selling globally from
-Bangladesh.
+**Delivered to WhatsApp every morning, researched, scored and fact-checked.**
 
----
+<img alt="Python" src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white"> <img alt="Google Gemini" src="https://img.shields.io/badge/Google%20Gemini-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white"> <img alt="Modal" src="https://img.shields.io/badge/Modal-000000?style=for-the-badge&logo=modal&logoColor=white"> <img alt="Supabase" src="https://img.shields.io/badge/Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white"> <img alt="WhatsApp Cloud API" src="https://img.shields.io/badge/WhatsApp%20Cloud%20API-25D366?style=for-the-badge&logo=whatsapp&logoColor=white"> <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white"> <img alt="vLLM" src="https://img.shields.io/badge/vLLM-FF6F00?style=for-the-badge&logo=nvidia&logoColor=white">
+
+</div>
+
+<br>
+
+> [!IMPORTANT]
+> **Every funding round is a signal.** An investor has just validated that a problem is real and worth paying to solve.
+> Startup Scout captures those signals from around the world, filters out what a small team can't build, and turns
+> the rest into concrete opportunities for the Bangladeshi market and for selling globally from Bangladesh.
 
 ## Why it matters
 
-The best early-stage opportunities are often proven elsewhere first. The information exists, but it is scattered
-across many publications, countries and languages, and none of it is framed for local realities such as mobile
-wallet payments, Bangla-first users and Facebook-driven commerce.
+> [!NOTE]
+> The best early-stage opportunities are often proven somewhere else first. The evidence exists, but it is scattered
+> across many publications, countries and languages, and none of it accounts for local realities: mobile-wallet
+> payments, Bangla-first users and Facebook-driven commerce.
+>
+> Startup Scout does the research and the local adaptation automatically, so each day starts with a short, curated
+> list of ideas instead of an endless news feed.
 
-Startup Scout does that research and adaptation automatically, so you start each day with a short, curated list of
-ideas instead of an endless news feed.
+## What it does
 
----
+### Discover
+<table>
+<tr><td width="50%" valign="top"><b>Daily intelligence briefing</b><br>A morning WhatsApp digest with the strongest local opportunities, the strongest opportunities to sell abroad, extra ideas from other industries and a snapshot of what was funded worldwide overnight.</td><td width="50%" valign="top"><b>Global coverage</b><br>Y Combinator and the US, Europe, India, Pakistan, the Middle East, Africa, Southeast Asia, China and Bangladesh. Non-English sources are translated automatically.</td></tr>
+<tr><td width="50%" valign="top"><b>Balanced results</b><br>Picks come from different industries, with a cap on AI-first companies, so the list reflects the whole market rather than one trend.</td><td width="50%" valign="top"><b>Watchlists and alerts</b><br>Follow a sector, stage, country or company and get notified only when something new happens.</td></tr>
+</table>
 
-## Key features
+### Decide
+<table>
+<tr><td width="50%" valign="top"><b>Opportunity cards</b><br>A concise brief for every pick: what the company does, why investors backed it, the Bangladesh version, the global angle, the AI angle and a one-week test plan.</td><td width="50%" valign="top"><b>Dual-market scoring</b><br>Every startup is scored for the Bangladeshi market and for global sales from Bangladesh: pain, timing, feasibility, cost to start and fit with your skills.</td></tr>
+<tr><td width="50%" valign="top"><b>On-demand deep dives</b><br>Local competitors, comparable startups that failed and why, a revenue model with pricing in taka, key risks and a first-week plan.</td><td width="50%" valign="top"><b>Verified facts only</b><br>Every name and figure is checked against the sources the system actually read. Anything unverified is removed or marked unknown.</td></tr>
+</table>
 
-### Daily intelligence briefing
-A morning WhatsApp digest with the strongest opportunities for Bangladesh, the strongest opportunities to build in
-Bangladesh and sell abroad, additional ideas from other industries, and a snapshot of what was funded worldwide
-overnight.
+### Validate
+<table>
+<tr><td width="50%" valign="top"><b>Idea notebook</b><br>Save ideas and move them from exploring to testing to a decision, with your reasons recorded.</td><td width="50%" valign="top"><b>Validation kits</b><br>A customer interview script in Bangla with English translations, landing-page copy, price points to test and a launch plan.</td></tr>
+<tr><td width="50%" valign="top"><b>Private field notes</b><br>Notes are processed only by a self-hosted open-source model. The system tracks which assumptions are holding and which are at risk.</td><td width="50%" valign="top"><b>Focused Q&A</b><br>Ask questions about any card or saved idea and get answers grounded in that material.</td></tr>
+</table>
 
-### Opportunity cards
-Each pick opens a concise brief:
-- What the company does and why investors backed it, with sources
-- How a small local team could build a Bangladeshi version (payments, language, devices, licences)
-- How the same idea could be sold internationally from Bangladesh
-- Where AI can make it cheaper or better
-- Who already operates in Bangladesh, found through live web research
-- A practical plan to test demand within a week
-- A transparent explanation of every score
+### Operate
+<table>
+<tr><td width="50%" valign="top"><b>Personalised ranking</b><br>Saves and skips refine future recommendations, within limits that keep results broad.</td><td width="50%" valign="top"><b>Weekly and monthly reports</b><br>New Y Combinator companies worth a look every week; funding trends in markets like Bangladesh every month.</td></tr>
+<tr><td width="50%" valign="top"><b>Private web archive</b><br>A secure, searchable archive of every card with filters, plus a board view of your notebook. Sign in from your phone with one tap.</td><td width="50%" valign="top"><b>Built for reliability</b><br>Multiple AI models back each other up, including a self-hosted fallback, with budget controls that keep it on free tiers.</td></tr>
+</table>
 
-### Dual-market scoring
-Every startup is evaluated twice — for the local market and for global sales from Bangladesh — against clear
-criteria: customer pain, timing, feasibility for a small team, cost to start and fit with your skills. Ideas that
-require heavy capital, hardware, special licences or physical operations are flagged and filtered out early.
-
-### Global coverage, balanced results
-Coverage spans Y Combinator and the US, Europe, India, Pakistan, the Middle East, Africa, Southeast Asia, China and
-Bangladesh, with non-English sources translated automatically. Daily picks are drawn from different industries so the
-list reflects the whole market, not a single trend.
-
-### Verified facts only
-Every factual statement must come from a source the system has actually read. An automated fact check removes any
-name or figure it cannot verify, and anything unknown is labelled as unknown.
-
-### On-demand deep dives
-One tap produces a full analysis: local competitors, comparable startups that failed and why, revenue model and
-pricing in taka, key risks and a first-week action plan.
-
-### Idea notebook and validation kits
-Save promising ideas and track them from exploration to testing to decision. Generate a customer interview script in
-Bangla with English translations, landing-page copy, price points to test and a launch plan.
-
-### Private field notes
-Record what customers tell you. Notes are processed only by a self-hosted open-source model and never sent to
-third-party AI providers. The system tracks which of your assumptions are holding and which are at risk.
-
-### Focused Q&A
-Ask questions about any card or saved idea and get direct answers grounded in that material.
-
-### Watchlists and alerts
-Follow a sector, stage, country or specific company and receive an alert only when something new happens.
-
-### Personalised ranking
-Your saves and skips refine future recommendations over time, within limits that keep the results broad.
-
-### Weekly and monthly reports
-A weekly review of new Y Combinator companies and the most relevant ones, and a monthly view of what is being
-funded in markets similar to Bangladesh.
-
-### Private web archive
-A secure, searchable archive of every card with filters for market, country, sector and score, plus a board view of
-your notebook.
-
-### Built for reliability
-Multiple AI models back each other up, including a self-hosted fallback, so the daily briefing continues even when a
-provider is unavailable. Built-in budget controls keep the system on free tiers.
-
----
 
 ## Architecture
 
@@ -268,18 +235,21 @@ Owner        WhatsApp API     web · FastAPI      Postgres          worker      
   │                │                │                │                │                │
 ```
 
-**Technology:** Google Gemini for analysis, with Gemma and a self-hosted Qwen model as fallbacks; a serverless
-application on Modal; PostgreSQL on Supabase with row-level security and pgvector; the WhatsApp Cloud API.
+## Technology and safeguards
 
-**Safeguards:** messages go only to the owner, webhooks are signature-verified and idempotent, WhatsApp's 24-hour
-messaging window is enforced with a pending queue, private notes stay on self-hosted infrastructure, a budget guard
-caps spending, and a daily quality audit checks scoring rules, duplicates, facts and links.
-
----
+<table>
+<tr><td width="50%" valign="top"><b>Technology</b><br>
+Google Gemini for analysis, with Gemma and a self-hosted Qwen model as fallbacks · serverless application on Modal ·
+PostgreSQL on Supabase with row-level security and pgvector · WhatsApp Cloud API · FastAPI · vLLM</td>
+<td width="50%" valign="top"><b>Safeguards</b><br>
+Messages go only to the owner · signed, idempotent webhooks · WhatsApp's messaging window enforced with a pending
+queue · private notes stay on self-hosted infrastructure · budget guard · daily quality audit</td></tr>
+</table>
 
 ## Getting started
 
-Requirements: free accounts with Google AI Studio, Meta for Developers (WhatsApp Cloud API), Supabase and Modal.
+> [!TIP]
+> You need free accounts with **Google AI Studio**, **Meta for Developers** (WhatsApp Cloud API), **Supabase** and **Modal**.
 
 ```bash
 git clone https://github.com/ShahidAhmed7/startup-scout.git && cd startup-scout
@@ -297,5 +267,6 @@ Preview a full run without sending any messages:
 .venv/bin/python -m scout.run --dry --dev
 ```
 
-Customise the target market, skills, excluded industries and scoring weights in `config.yaml`, and the news sources
-in `sources.yaml`.
+> [!TIP]
+> Customise the target market, skills, excluded industries and scoring weights in `config.yaml`, and the news
+> sources in `sources.yaml`.
