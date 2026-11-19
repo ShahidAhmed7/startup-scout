@@ -41,6 +41,45 @@ def _priority_order(conn, ids: list[int]) -> list[int]:
     return sorted(ids, key=lambda i: rank.get(i, (False, 0)), reverse=True)
 
 
+def _after(conn, card_id: int, market: str) -> int | None:
+    d = conn.execute("select data_json from cards where id = %s", (card_id,)).fetchone()["data_json"] or {}
+    v = (d.get("score_check") or {}).get(market)
+    return int(v) if isinstance(v, (int, float)) else None
+
+
+def _check_and_swap(conn, cr, picks, reserve, run_date, new_round, cfg, max_swaps):
+    """After research: drop picks whose after-research score for their market fell below min_score (or whose card
+    failed), and fill each gap from the reserve for the same market, at most `max_swaps` extra cards."""
+    from scout.score import research_check
+
+    market_of = {r["startup_id"]: mk for r, mk in picks}
+    rows = conn.execute("select id, market from cards where id = any(%s) order by id", (cr["card_ids"],)).fetchall()
+    cards = [{"card_id": r["id"], "market": r["market"], "after": _after(conn, r["id"], r["market"])} for r in rows]
+    keep, drop = research_check(cards, cfg["min_score"])
+    gaps = [c["market"] for c in drop] + [market_of.get(sid, "bangladesh") for sid, _ in cr["failed"]]
+    swaps = []
+    pool = list(reserve)
+    for market in gaps:
+        if len(swaps) >= max_swaps:
+            break
+        key = "bd" if market == "bangladesh" else "gl"
+        cand = next((r for r in pool if r[key] >= cfg["min_score"]), None)
+        if cand is None:
+            continue
+        pool.remove(cand)
+        extra = cards_mod.write_cards(conn, [(cand, market)], run_date, new_round)
+        for cid in extra["card_ids"]:
+            c = {"card_id": cid, "market": market, "after": _after(conn, cid, market)}
+            ok, _ = research_check([c], cfg["min_score"])
+            swaps.append({"in": cid, "kept": bool(ok)})
+            keep += ok
+    for c in drop:  # keep the card in the archive, marked as dropped after research
+        conn.execute("update cards set data_json = data_json || '{\"dropped_after_research\": true}'::jsonb "
+                     "where id = %s", (c["card_id"],))
+    keep, _ = research_check(keep, cfg["min_score"])  # re-sort by after-research score
+    return keep, swaps, cr["failed"]
+
+
 def health_notes(conn) -> list[str]:
     """Sources failing 3 days in a row or empty for 7 days, mentioned once (CLAUDE.md section 6)."""
     from scout import health
@@ -74,25 +113,20 @@ def run_pipeline(conn, *, skip_collect: bool = False, limit: int | None = None, 
         cfg = effective(conn)
         rows = todays_rows(conn, run_date)
         div = cfg.get("diversity", {})
+        q = cfg.get("quality", {})
         sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], min_feasibility=cfg.get("min_feasibility", 0),
                        max_ai_native=div.get("max_ai_native"), explore_rows=div.get("explore_rows", 0),
-                       explore_min_score=div.get("explore_min_score", 5))
+                       explore_min_score=div.get("explore_min_score", 5),
+                       low_confidence_penalty=q.get("low_confidence_penalty", 0.0))
         picks = [(r, "bangladesh") for r in sl["bangladesh"]] + [(r, "global") for r in sl["global"]]
         cr = cards_mod.write_cards(conn, picks, run_date, m["new_round"])
-        # if a card failed, use a reserve pick for the same market
-        if cr["failed"] and sl["reserve"]:
-            market_of = {r["startup_id"]: mk for r, mk in picks}
-            reserve = [(r, market_of.get(sid, "bangladesh"))
-                       for r, (sid, _) in zip(sl["reserve"], cr["failed"])]
-            extra = cards_mod.write_cards(conn, reserve, run_date, m["new_round"])
-            cr["card_ids"] += extra["card_ids"]
-            cr["models"] += extra["models"]
-        stats["cards"] = len(cr["card_ids"])
-        stats["card_models"] = cr["models"]
-        stats["card_failures"] = cr["failed"]
-        card_market = {r["id"]: r["market"] for r in conn.execute(
-            "select id, market from cards where id = any(%s) order by id", (cr["card_ids"],)).fetchall()}
-        ordered = sorted(cr["card_ids"], key=lambda c: (card_market[c] != "bangladesh", c))
+        final, swaps, failed = _check_and_swap(conn, cr, picks, sl["reserve"], run_date, m["new_round"], cfg,
+                                               q.get("max_research_swaps", 3))
+        stats["cards"] = len(final)
+        stats["card_failures"] = failed
+        stats["research_swaps"] = swaps
+        ordered = [c["card_id"] for c in final]
+        card_market = {c["card_id"]: c["market"] for c in final}
         d = digest_mod.build(conn, run_date, [(cid, card_market[cid]) for cid in ordered],
                              {"found": len(cands), "scored": sc["scored"], "skipped": sc["skipped"],
                               "skip_reasons": sc["skip_reasons"]},

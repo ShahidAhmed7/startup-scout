@@ -12,6 +12,10 @@ min_feasibility: 5    # a pick must be buildable by 2-3 people in ~2 months
 # digest adds "More to explore" rows from other sectors (cards on tap). max_ai_native is a MAXIMUM, not a quota:
 # 0-3 AI-first startups in the whole digest (picks + explore rows together), depending on what is best that day.
 diversity: {max_ai_native: 3, explore_rows: 5, explore_min_score: 5}
+# Picks rest on solid information (owner, 2026-11-19): a low-confidence startup ranks 1 point lower, so a
+# better-documented startup with a similar score wins. After research, a pick whose score for its market falls
+# below min_score is swapped for the next reserve (at most 3 swaps a day).
+quality: {low_confidence_penalty: 1.0, max_research_swaps: 3}
 
 owner:
   skills: [AI and machine learning, Python, web apps]

@@ -106,3 +106,22 @@ def test_core_name_merges_company_name_variants():
     assert core_name("Soket AI Labs") == core_name("Soket AI") == "soket"
     assert core_name("Unsiloed Inc.") == core_name("Unsiloed AI")
     assert core_name("Open AI") != core_name("Open Bank")
+
+
+def test_low_confidence_loses_to_a_documented_startup_with_a_similar_score():
+    rows = [ai_row(1, "fintech", 7, 2), ai_row(2, "health", 6, 2), ai_row(3, "education", 7, 2)]
+    rows[0]["conf"] = "low"
+    sl = shortlist(rows, {"bangladesh": 2, "global": 0}, 6, low_confidence_penalty=1.0)
+    assert [r["startup_id"] for r in sl["bangladesh"]] == [3, 2]   # documented 7 and 6 beat low-confidence 7
+    sl = shortlist(rows[:1], {"bangladesh": 1, "global": 0}, 6, low_confidence_penalty=1.0)
+    assert [r["startup_id"] for r in sl["bangladesh"]] == [1]      # still picked if nothing better exists
+
+
+def test_research_check_drops_and_reorders():
+    from scout.score import research_check
+    cards = [{"card_id": 1, "market": "bangladesh", "after": 6}, {"card_id": 2, "market": "bangladesh", "after": 5},
+             {"card_id": 3, "market": "global", "after": 8}, {"card_id": 4, "market": "bangladesh", "after": 8},
+             {"card_id": 5, "market": "global", "after": None}]
+    keep, drop = research_check(cards, 6)
+    assert [c["card_id"] for c in drop] == [2]
+    assert [c["card_id"] for c in keep] == [4, 1, 3, 5]

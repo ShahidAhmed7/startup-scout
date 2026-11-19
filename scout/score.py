@@ -120,14 +120,19 @@ def buzz(conn, sid: int) -> float:
 
 
 def shortlist(rows: list[dict], mix: dict, min_score: int, reserve: int = 3, min_feasibility: int = 0,
-              max_ai_native: int | None = None, explore_rows: int = 0, explore_min_score: int = 5) -> dict:
+              max_ai_native: int | None = None, explore_rows: int = 0, explore_min_score: int = 5,
+              low_confidence_penalty: float = 0.0) -> dict:
     """rows: [{startup_id, sector, ai_native, bd, gl, rank_bd, rank_global, buzz, feas}] (not skipped).
 
     Picks: top `mix['bangladesh']` by Bangladesh score and `mix['global']` by global score, each >= min_score and
     feasibility >= min_feasibility; every pick from a DIFFERENT broad sector; tie-break on buzz.
     Explore: up to `explore_rows` more startups (score >= explore_min_score) from sectors not used yet, non-AI first.
     `max_ai_native` caps AI-first startups across picks AND explore rows together. It is a maximum, not a quota:
-    the digest may contain fewer (or none). Reserve: spare picks."""
+    the digest may contain fewer (or none). Reserve: spare picks.
+    Low-confidence startups rank `low_confidence_penalty` points lower (they still need min_score on their own)."""
+    def adj(r, key):
+        return r[key] - (low_confidence_penalty if r.get("conf") == "low" else 0.0)
+
     rows = [r for r in rows if r.get("known", True)]  # never pick or explore a startup whose product is unknown
     feasible = [r for r in rows if r.get("feas", 10) >= min_feasibility]
     used_ids: set[int] = set()
@@ -153,7 +158,7 @@ def shortlist(rows: list[dict], mix: dict, min_score: int, reserve: int = 3, min
 
     def pick(key_rank: str, key_score: str, n: int) -> list[dict]:
         out = []
-        for r in sorted(feasible, key=lambda r: (r[key_rank], r["buzz"]), reverse=True):
+        for r in sorted(feasible, key=lambda r: (adj(r, key_rank), r.get("conf") != "low", r["buzz"]), reverse=True):
             if len(out) >= n:
                 break
             if r[key_score] >= min_score and ok(r):
@@ -163,11 +168,11 @@ def shortlist(rows: list[dict], mix: dict, min_score: int, reserve: int = 3, min
 
     bd = pick("rank_bd", "bd", mix.get("bangladesh", 3))
     gl = pick("rank_global", "gl", mix.get("global", 2))
-    best = lambda r: (max(r["rank_bd"], r["rank_global"]), r["buzz"])
+    best = lambda r: (max(adj(r, "rank_bd"), adj(r, "rank_global")), r.get("conf") != "low", r["buzz"])
     extra = [r for r in sorted(feasible, key=best, reverse=True)
              if r["startup_id"] not in used_ids and max(r["bd"], r["gl"]) >= min_score][:reserve]
     explore: list[dict] = []
-    for r in sorted(rows, key=lambda r: (not r.get("ai_native"), *best(r)), reverse=True):
+    for r in sorted(rows, key=lambda r: (not r.get("ai_native"), *best(r)), reverse=True):  # noqa: E501
         if len(explore) >= explore_rows:
             break
         if max(r["bd"], r["gl"]) < explore_min_score or r["startup_id"] in used_ids or r in extra:
@@ -188,7 +193,7 @@ def todays_rows(conn, run_date) -> list[dict]:
              (sc.scores_json->>'feasibility')::int as feas,
              coalesce(sc.scores_json->>'sector', sc.category) as sector,
              coalesce((sc.scores_json->>'ai_native')::boolean, false) as ai_native,
-             coalesce(nullif(trim(s.description), ''), '') <> '' as known
+             coalesce(nullif(trim(s.description), ''), '') <> '' as known, sc.confidence as conf
            from scores sc join startups s on s.id = sc.startup_id where sc.run_date = %s and not sc.skip
            order by sc.startup_id, sc.created_at desc""", (run_date,)).fetchall()
     for r in rows:
@@ -196,3 +201,13 @@ def todays_rows(conn, run_date) -> list[dict]:
         r["rank_bd"] = float(r["rank_bd"])
         r["rank_global"] = float(r["rank_global"])
     return rows
+
+
+def research_check(cards: list[dict], min_score: int) -> tuple[list[dict], list[dict]]:
+    """cards: [{card_id, market, after}] where `after` is the after-research score for the card's market (None if
+    the writer gave none). Returns (keep, drop): drop = picks whose after-research score fell below min_score.
+    Kept picks are ordered by after-research score (best first) within each market."""
+    keep = [c for c in cards if c["after"] is None or c["after"] >= min_score]
+    drop = [c for c in cards if c not in keep]
+    keep.sort(key=lambda c: (c["market"] != "bangladesh", -(c["after"] if c["after"] is not None else 0)))
+    return keep, drop
