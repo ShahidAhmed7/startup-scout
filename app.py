@@ -116,7 +116,10 @@ qwen_image = (
     .entrypoint([])
     .apt_install("ninja-build")
     .pip_install("vllm==0.33.0", "httpx==0.28.1")
-    .env({"VLLM_LOGGING_LEVEL": "WARNING", "HF_HUB_OFFLINE": "1", "CUDA_HOME": "/usr/local/cuda"})
+    .env({"VLLM_LOGGING_LEVEL": "WARNING", "HF_HUB_OFFLINE": "1", "CUDA_HOME": "/usr/local/cuda",
+          # keep compiled kernels on the volume so later cold starts skip the ~3 min compile
+          "FLASHINFER_WORKSPACE_BASE": "/models/.cache/flashinfer", "VLLM_CACHE_ROOT": "/models/.cache/vllm",
+          "TRITON_CACHE_DIR": "/models/.cache/triton"})
 )
 
 
@@ -188,6 +191,10 @@ class Qwen:
     @modal.exit()
     def stop(self):
         self.proc.terminate()
+        try:
+            weights.commit()  # persist the compiled-kernel cache
+        except Exception:
+            pass
 
 
 @app.local_entrypoint()

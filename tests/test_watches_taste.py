@@ -37,3 +37,9 @@ def test_taste_nudge_needs_three_signals_and_is_bounded():
     assert taste.nudge(b, [a, a], [b]) == -1.0                  # like what was skipped: capped at -1
     mid = taste.nudge([1.0, 1.0, 0.0], [a, a], [b])
     assert -1.0 <= mid <= 1.0 and abs(mid) < 0.5
+
+
+def test_sentence_case_for_qwen_output():
+    from scout.notebook import sentence_case
+    assert sentence_case("sellers check bkash by hand. latest note shows 3 of 5 in dhaka.") == \
+        "Sellers check bKash by hand. Latest note shows 3 of 5 in Dhaka."

@@ -13,7 +13,18 @@ from scout.whatsapp import outbox
 from scout.whatsapp.formats import buttons_payload, clip, list_payload
 
 STATUSES = {"exploring": "Exploring", "testing": "Testing", "promising": "Promising", "dropped": "Dropped"}
-QWEN_WAIT = "Thinking, this one takes a minute or two."
+QWEN_WAIT = "Thinking on our private model. This can take 5-15 minutes."
+
+
+def sentence_case(text: str) -> str:
+    """Qwen sometimes writes all lower-case: capitalise the start of each sentence (and bKash/Bangla names)."""
+    import re as _re
+
+    t = _re.sub(r"(^|[.!?]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), (text or "").strip())
+    for w, fixed in (("bkash", "bKash"), ("nagad", "Nagad"), ("bangla", "Bangla"), ("dhaka", "Dhaka"),
+                     ("bangladesh", "Bangladesh"), ("f-commerce", "F-commerce")):
+        t = _re.sub(rf"\b{w}\b", fixed, t, flags=_re.I) if w != "f-commerce" else t
+    return t
 
 
 def _reply(conn, body: str, kind: str = "reply") -> None:
@@ -94,7 +105,7 @@ def saved_menu(conn) -> bool:
         return False
     items = [{"id": f"idea:{r['id']}", "title": clip(r["name"], 24),
               "description": f"{STATUSES.get(r['status'], r['status'])} · saved {r['created_at']:%d %b}"} for r in rows[:10]]
-    outbox.send_now(conn, [list_payload("", f"Your notebook has {len(rows)} ideas. Open one to see its assumptions "
+    outbox.send_now(conn, [list_payload("", f"Your notebook has {len(rows)} idea{'s' if len(rows) != 1 else ''}. Open one to see its assumptions "
                                             "and change its status.", "Open idea",
                                         [{"title": "Notebook", "rows": items}])], "saved")
     return True
@@ -121,11 +132,11 @@ def add_note(conn, idea: dict, text: str) -> None:
         for a in out.data.get("assumptions", [])[:10]:
             conn.execute("""insert into assumptions (idea_id, text, status, evidence_for, evidence_against)
                             values (%s, %s, %s, %s, %s)""",
-                         (idea["id"], clip(a["text"], 200), a["status"] if a["status"] in
+                         (idea["id"], clip(sentence_case(a["text"]).rstrip("."), 200), a["status"] if a["status"] in
                           ("holding", "at_risk", "untested") else "untested",
                           max(0, int(a["evidence_for"])), max(0, int(a["evidence_against"]))))
     if out.data.get("summary"):
-        _reply(conn, out.data["summary"])
+        _reply(conn, sentence_case(out.data["summary"]))
     show_idea(conn, find_idea(conn, idea["name"]) or idea)
 
 
@@ -148,7 +159,7 @@ def make_kit(conn, card_id: int, shorter: bool = False, all_bangla: bool = False
     idea = conn.execute("select * from ideas where startup_id = %s", (card["startup_id"],)).fetchone()
     notes = _notes(conn, idea["id"]) if idea else []
     private = bool(notes)  # built from private notes -> Qwen only
-    _reply(conn, QWEN_WAIT if private else "Building your validation kit. This takes about a minute.")
+    _reply(conn, QWEN_WAIT if private else "Building your validation kit. This takes a few minutes.")
     market = "Bangladesh" if card["market"] == "bangladesh" else "global (sold abroad from Bangladesh)"
     try:
         out = router.complete("kit", prompts.kit_prompt(card["body"][:3500], "\n".join(notes), market, shorter,

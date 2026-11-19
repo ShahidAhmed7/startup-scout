@@ -56,7 +56,7 @@ def handle_text(conn, text: str) -> bool:
             _reply(conn, "No watches yet. Example: watch fintech seed Nigeria, or watch render.com")
         else:
             _reply(conn, "*Your watches*\n" + "\n".join(f"{n}. {describe(json.loads(r['query']))}"
-                                                        for n, r in enumerate(rows, 1)) + "\n\nRemove with: unwatch 2")
+                                                        for n, r in enumerate(rows, 1)) + "\n\nRemove one with: unwatch <number>")
         return True
     m = re.fullmatch(r"unwatch\s+(\d+)", low)
     if m:

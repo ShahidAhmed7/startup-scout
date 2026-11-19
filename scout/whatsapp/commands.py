@@ -131,7 +131,7 @@ def more_card(conn, card_id: int) -> None:
         return
     conn.execute("insert into signals (card_id, kind) values (%s, 'more')", (card_id,))
     conn.execute("update owner_state set last_opened_card_id = %s where id = 1", (card_id,))
-    reply(conn, "Digging deeper. This takes about a minute.")
+    reply(conn, "Digging deeper. This takes a few minutes.")
     try:
         text, _ = deep_dive(conn, card_id)
     except Exception:
