@@ -16,3 +16,4 @@ data/
 
 # Project docs stay local (owner's choice): AGENTS.md, CLAUDE.md, HANDOVER.md, PROGRESS.md
 *.md
+!README.md
