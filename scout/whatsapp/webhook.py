@@ -98,4 +98,7 @@ def create_app(spawn: Callable[[str], None], connect: Callable) -> FastAPI:
                                   f"{err.get('code')}: {err.get('title') or err.get('message')}"))
         return {"ok": True}
 
+    from scout.archive import add_routes
+
+    add_routes(app, connect)
     return app

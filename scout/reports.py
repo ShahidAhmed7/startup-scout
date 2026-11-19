@@ -26,7 +26,8 @@ def _week_funding(conn, since) -> str:
     regions = Counter(region_of(r["country"]) if r["country"] else src_map.get(r["src_region"] or "", "Unknown")
                       for r in rounds)
     regions.pop("Unknown", None)
-    cats = Counter((r["category"] or "").lower() for r in rounds if r["category"])
+    cats = Counter((r["category"] or "").lower() for r in rounds
+                   if r["category"] and r["category"].lower() not in ("unknown", "other"))
     top = sorted((r for r in rounds if r["amount_usd"]), key=lambda r: -r["amount_usd"])[:3]
     lines = [f"{len(rounds)} rounds. By region: " + ", ".join(f"{k} {v}" for k, v in regions.most_common(8)) + "."]
     if cats:
@@ -92,7 +93,12 @@ def friday(conn) -> dict:
         if rows:
             payloads.append(list_payload("", "Open a card:", "See cards", [{"title": "YC this week", "rows": rows}]))
         sent = outbox.deliver(conn, payloads, "friday_report")
-        stats = {"yc": len(yc), "picks": [p["name"] for p in picks], "sent_now": sent}
+        try:  # weekly re-check of saved ideas: alert on new names in the Bangladesh search
+            from scout import watches
+            new_comp = watches.competitor_recheck(conn)
+        except Exception:
+            new_comp = 0
+        stats = {"yc": len(yc), "picks": [p["name"] for p in picks], "sent_now": sent, "competitor_alerts": new_comp}
         repo.finish_run(conn, rid, "ok", stats)
         return stats
     except Exception as e:
@@ -124,6 +130,112 @@ def _deep_dive_for(conn, startup_id: int) -> str | None:
 
 
 def monthly(conn) -> dict:
+    """Markets like ours, what the bot learned, 3 close-call skips, saved ideas re-checked, model usage."""
+    from scout import budget
+    from scout.config import config
+    from scout.normalize import short_country
+
     rid = repo.start_run(conn, "monthly")
-    repo.finish_run(conn, rid, "ok", {"note": "built in phase 5"})
-    return {}
+    since = datetime.now(timezone.utc) - timedelta(days=30)
+    cfg = config()
+    try:
+        month = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%B %Y")
+        lines = [f"*Monthly report: {month}*", ""]
+
+        # 1. markets like ours
+        ours = {m.lower() for m in cfg["markets_like_ours"]}
+        rows = conn.execute(
+            """select r.amount_usd, r.stage, s.name, s.country, s.category from rounds r
+               join startups s on s.id = r.startup_id where r.created_at >= %s
+               and coalesce(r.stage, '') not like 'YC %%'""", (since,)).fetchall()
+        local = [r for r in rows if (short_country(r["country"]) or "").lower() in ours
+                 or region_of(r["country"]).lower() in ours]
+        lines.append("*What got funded in markets like ours*")
+        if local:
+            by_c = Counter(short_country(r["country"]) for r in local)
+            cats = Counter((r["category"] or "").lower() for r in local
+                           if r["category"] and r["category"].lower() not in ("unknown", "other"))
+            big = sorted((r for r in local if r["amount_usd"]), key=lambda r: -r["amount_usd"])[:3]
+            lines.append(f"{len(local)} rounds: " + ", ".join(f"{k} {v}" for k, v in by_c.most_common(6)) + ".")
+            if cats:
+                lines.append("Top themes: " + ", ".join(f"{k} {v}" for k, v in cats.most_common(5)) + ".")
+            if big:
+                lines.append("Largest: " + "; ".join(f"{r['name']} {_money(r['amount_usd'])} ({r['country']})"
+                                                     for r in big) + ".")
+        else:
+            lines.append("No rounds with a known country in these markets this month.")
+        lines.append(f"Worldwide: {_week_funding(conn, since)}")
+
+        # 2. what the bot learned
+        sig = conn.execute(
+            """select g.kind, lower(coalesce(s.category, '')) as cat from signals g join cards c on c.id = g.card_id
+               join startups s on s.id = c.startup_id where g.created_at >= %s and g.kind in ('save', 'skip')""",
+            (since,)).fetchall()
+        saved = Counter(r["cat"] for r in sig if r["kind"] == "save" and r["cat"])
+        skipped = Counter(r["cat"] for r in sig if r["kind"] == "skip" and r["cat"])
+        taste_rows = conn.execute("select taste from scores where created_at >= %s and taste is not null",
+                                  (since,)).fetchall()
+        lines += ["", "*What I learned about you*"]
+        if not sig:
+            lines.append("No Save or Skip taps yet, so ranking is not personalised.")
+        else:
+            lines.append(f"{sum(1 for r in sig if r['kind'] == 'save')} saves, "
+                         f"{sum(1 for r in sig if r['kind'] == 'skip')} skips.")
+            if saved:
+                lines.append("You save: " + ", ".join(k for k, _ in saved.most_common(3)) + ".")
+            if skipped:
+                lines.append("You skip: " + ", ".join(k for k, _ in skipped.most_common(3)) + ".")
+            if taste_rows:
+                ups = sum(1 for r in taste_rows if r["taste"] > 0.2)
+                downs = sum(1 for r in taste_rows if r["taste"] < -0.2)
+                lines.append(f"Taste nudges (max ±1 point): {ups} startups moved up, {downs} moved down.")
+            else:
+                lines.append("Taste nudges start after 3 Save/Skip taps.")
+
+        # 3. close calls: skip-list removals that scored best
+        close = conn.execute(
+            """select s.name, k.reason, greatest((sc.scores_json->>'bangladesh')::int,
+                 (sc.scores_json->>'global')::int) as best
+               from skipped k join startups s on s.id = k.startup_id
+               join lateral (select scores_json from scores where startup_id = s.id order by created_at desc limit 1) sc on true
+               where k.created_at >= %s order by best desc limit 3""", (since,)).fetchall()
+        if close:
+            lines += ["", "*3 close calls your skip list removed*"] + [
+                f"- {r['name']} ({r['reason']}): best score {r['best']}" for r in close]
+            lines.append("If one of these looks interesting, send skip remove <category>.")
+
+        # 4. saved ideas re-checked
+        ideas = conn.execute(
+            """select s.name, i.status, sc.scores_json j,
+                 (select count(*) from notes n where n.idea_id = i.id) as notes,
+                 (select count(*) from assumptions a where a.idea_id = i.id and a.status = 'at_risk') as at_risk
+               from ideas i join startups s on s.id = i.startup_id
+               left join lateral (select scores_json from scores where startup_id = s.id order by created_at desc limit 1) sc on true
+               order by i.created_at""").fetchall()
+        if ideas:
+            lines += ["", "*Your saved ideas*"] + [
+                f"- {r['name']}: {r['status'].capitalize()}, BD {r['j']['bangladesh'] if r['j'] else '?'} · "
+                f"Global {r['j']['global'] if r['j'] else '?'}, {r['notes']} notes"
+                + (f", {r['at_risk']} assumptions at risk" if r["at_risk"] else "") for r in ideas]
+
+        # 5. free limits and backup model
+        use = conn.execute(
+            """select model_id, count(*) filter (where status = 'ok') as ok,
+                 count(*) filter (where status in ('quota', 'cap')) as limited,
+                 coalesce(sum(gpu_seconds), 0) as gpu
+               from usage where created_at >= date_trunc('month', now()) group by model_id order by ok desc""").fetchall()
+        lines += ["", "*AI usage this month*"]
+        for r in use:
+            if r["model_id"] and r["model_id"].startswith("Qwen"):
+                lines.append(f"- Qwen backup: {float(r['gpu']) / 3600:.2f} GPU hours")
+            elif r["ok"] or r["limited"]:
+                lines.append(f"- {r['model_id']}: {r['ok']} call{'s' if r['ok'] != 1 else ''}" + (f", {r['limited']} hit a limit" if r["limited"] else ""))
+        lines.append(f"Modal spend estimate: ${budget.month_spend(conn):.2f} of the ${cfg['budget']['modal_stop_usd']} limit.")
+
+        sent = outbox.deliver(conn, outbox.text("\n".join(lines)), "monthly_report")
+        stats = {"local_rounds": len(local), "close_calls": len(close), "ideas": len(ideas), "sent_now": sent}
+        repo.finish_run(conn, rid, "ok", stats)
+        return stats
+    except Exception as e:
+        repo.finish_run(conn, rid, "error", error=f"{type(e).__name__}: {str(e)[:300]}")
+        raise

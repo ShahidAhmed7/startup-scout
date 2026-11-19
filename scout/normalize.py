@@ -8,7 +8,8 @@ from urllib.parse import urlsplit
 _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
 _SUFFIXES = {"inc", "ltd", "limited", "llc", "pvt", "private", "corp", "corporation", "co", "gmbh",
-             "plc", "pte", "sa", "bv", "ag", "the"}
+             "plc", "pte", "sa", "sas", "sarl", "srl", "spa", "bv", "nv", "ag", "oy", "ab", "aps", "as", "pty",
+             "sl", "kk", "pbc", "the"}
 
 
 def clean_text(s: str | None, limit: int | None = None) -> str:

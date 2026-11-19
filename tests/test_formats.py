@@ -60,3 +60,10 @@ def test_numbered_lines():
         "1. Post in groups.\n2. Call 5 clinics.\n3. Count replies."
     assert numbered_lines("Just one sentence.") == "Just one sentence."
     assert numbered_lines("1. a\n2. b") == "1. a\n2. b"
+
+
+def test_company_suffixes_are_ignored_when_merging():
+    from scout.normalize import norm_name
+    assert norm_name("Genesis AI SAS") == norm_name("Genesis AI") == "genesis ai"
+    assert norm_name("Isomorphic Labs Ltd.") == "isomorphic labs"
+    assert norm_name("Orikata Bio PBC") == "orikata bio"

@@ -53,7 +53,8 @@ def funding_snapshot(conn, since) -> str:
     big = max((r for r in rounds if r["amount_usd"]), key=lambda r: r["amount_usd"], default=None)
     if big:
         line += f". Biggest: {big['name']} {_money(big['amount_usd'])}" + (f" ({big['country']})" if big["country"] else "")
-    cats = Counter((r["category"] or "").lower() for r in rounds if r["category"])
+    cats = Counter((r["category"] or "").lower() for r in rounds
+                   if r["category"] and r["category"].lower() not in ("unknown", "other"))
     if cats:
         line += ". Busy: " + ", ".join(f"{k} {v}" for k, v in cats.most_common(3))
     if yc:

@@ -110,10 +110,13 @@ QWEN_DIR = "/models/Qwen3.6-27B-FP8"
 weights = modal.Volume.from_name("scout-qwen-weights", create_if_missing=True)
 
 download_image = modal.Image.debian_slim(python_version="3.12").pip_install("huggingface_hub==2.3.0")
+# NVIDIA's CUDA "devel" image includes nvcc: vLLM's FlashInfer kernels compile on first use and fail without it.
 qwen_image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image.from_registry("nvidia/cuda:13.0.2-devel-ubuntu24.04", add_python="3.12")
+    .entrypoint([])
+    .apt_install("ninja-build")
     .pip_install("vllm==0.33.0", "httpx==0.28.1")
-    .env({"VLLM_LOGGING_LEVEL": "WARNING", "HF_HUB_OFFLINE": "1"})
+    .env({"VLLM_LOGGING_LEVEL": "WARNING", "HF_HUB_OFFLINE": "1", "CUDA_HOME": "/usr/local/cuda"})
 )
 
 
@@ -131,7 +134,7 @@ def download_qwen() -> dict:
 
 
 @app.cls(image=qwen_image, gpu="A100-80GB", volumes={"/models": weights}, timeout=1800, scaledown_window=120,
-         max_containers=1)
+         max_containers=1, retries=0)
 class Qwen:
     @modal.enter()
     def start(self):

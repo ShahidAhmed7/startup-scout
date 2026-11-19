@@ -8,7 +8,7 @@ import sys
 from scout.db import repo
 
 PIPELINE_TABLES = ["signals", "notes", "assumptions", "ideas", "cards", "digests", "skipped", "scores", "rounds",
-                   "startup_items", "startups", "items", "yc_seen"]
+                   "startup_items", "startups", "items", "yc_seen", "lane_seen"]
 
 
 def reset(conn) -> None:

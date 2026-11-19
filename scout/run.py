@@ -66,6 +66,11 @@ def run_pipeline(conn, *, skip_collect: bool = False, limit: int | None = None, 
         stats["candidates"] = len(cands)
         sc = score(conn, cands[:cap], run_date)
         stats["score"] = sc
+        try:  # taste learning: never more than ±1, only after 3+ Save/Skip signals
+            from scout import taste
+            stats["taste"] = taste.apply(conn, run_date)
+        except Exception as e:
+            stats["taste"] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
         cfg = effective(conn)
         rows = todays_rows(conn, run_date)
         sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], min_feasibility=cfg.get("min_feasibility", 0))
@@ -90,6 +95,11 @@ def run_pipeline(conn, *, skip_collect: bool = False, limit: int | None = None, 
                               "skip_reasons": sc["skip_reasons"]},
                              notes=health_notes(conn), funding_since=run_started)
         stats["digest_id"] = d["id"]
+        try:  # watches and saved-idea alerts, only on change (queued if the window is closed)
+            from scout import watches
+            stats["alerts"] = watches.check(conn, run_started)
+        except Exception as e:
+            stats["alerts"] = f"error: {type(e).__name__}: {str(e)[:120]}"
         stats["items"] = stats.get("collect", {}).get("new_items", ex["stats"]["pending"])
         stats["seconds"] = round(time.time() - t0)
         repo.finish_run(conn, run_id, "ok", stats)
