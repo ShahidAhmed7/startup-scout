@@ -33,7 +33,7 @@ watches / unwatch <number>
 archive: a sign-in link to your private web archive"""
 
 NOT_CHAT = "I only answer questions about your cards and saved ideas."
-ARCHIVE_BASE = ""
+
 UNKNOWN = "I don't know that one. Send help for the list of commands."
 
 
@@ -295,8 +295,14 @@ def handle(conn, msg: dict) -> None:
     if low in ("archive", "web", "website"):
         from scout.archive import login_link
 
+        from scout.config import env
+
+        base = env("PUBLIC_BASE_URL")
+        if not base:
+            reply(conn, "The archive address isn't set up yet.")
+            return
         reply(conn, "Your private archive (link works for 15 minutes, then you stay signed in for 30 days on this "
-                    "phone):\n" + login_link(ARCHIVE_BASE))
+                    "phone):\n" + login_link(base))
         return
     m = re.fullmatch(r"time\s+(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?", low)
     if m:
