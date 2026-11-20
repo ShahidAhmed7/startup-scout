@@ -279,3 +279,7 @@ Preview a full run without sending any messages:
 > [!TIP]
 > Customise the target market, skills, excluded industries and scoring weights in `config.yaml`, and the news
 > sources in `sources.yaml`.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE). Copyright 2026 ShahidAhmed7.
