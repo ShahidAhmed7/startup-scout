@@ -13,8 +13,8 @@ from scout.llm import prompts, run as ai
 BATCH = 10
 FUNDING_WORDS = re.compile(
     r"(\braise[sd]?\b|\braising\b|\bfunding\b|\bfunded\b|\bseed\b|pre-seed|\bseries [a-f]\b|\bround\b|"
-    r"\binvestment\b|\binvests?\b|\bbacked\b|\bsecures?\b|\bcloses?\b|\bbags\b|\bnets\b|\blands\b|"
-    r"\$\s?\d|₹|\bcrore\b|\blakh\b|\bventure\b|\bangel\b|launch hn|\blaunch(es|ed)?\b|"
+    r"\binvestments?\b|\binvests?\b|\bback(ed|s|ing)\b|\bsecures?\b|\bcloses?\b|\bbags\b|\bnets\b|\blands\b|"
+    r"\$\s?\d|€\s?\d|£\s?\d|₹|\bcrore\b|\blakh\b|\bventure\b|\bangel\b|launch hn|\blaunch(es|ed)?\b|"
     r"融资|天使轮|[A-E]\+?轮|领投|投资|تمويل|جولة|استثمار|pendanaan|investasi)", re.I)
 
 

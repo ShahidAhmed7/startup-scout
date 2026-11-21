@@ -300,3 +300,13 @@ def test_row_title_drops_trailing_note_before_cutting_the_name():
     assert row_title("Archer (formerly hackajob)", "BD 7") == "Archer · BD 7"
     assert row_title("Mission Mobile", "BD 7") == "Mission Mobile · BD 7"
     assert len(row_title("A Very Long Company Name Here", "Global 8")) <= 24
+
+
+def test_prefilter_catches_backs_investments_and_euro_amounts():
+    from scout.extract import prefilter
+
+    assert prefilter("Terra Industries backs Community Wolf crime platform", "")
+    assert prefilter("Daniel Ek is backing a fusion startup", "")
+    assert prefilter("SIFC starts attracting global investments for local startups", "")
+    assert prefilter("Berlin's Acme picks up €4M", "")
+    assert not prefilter("Pakistan wins Blind T20 Asia Cup", "")
