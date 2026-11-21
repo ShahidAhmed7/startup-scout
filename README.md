@@ -67,7 +67,7 @@
 
 The pool is balanced before scoring: the US is capped at 35%, Europe at 15%, China at 10%, and Bangladesh plus similar markets target at least 40%. Regional caps can relax when other regions run out; shortages are recorded. AI-first startups are capped at 40% of the scored pool and 3 across picks and explore rows.
 
-Bangladesh and global scores use separate market dimensions, with no technology or founder-profile bonus. **Strong** starts at 8, **Promising** at 6.5 and **Watch** at 5. Shown scores round half up. The digest normally has up to 3 Bangladesh and 2 global picks. On a slow day, Watch ideas fill it to at least 3 when eligible candidates exist. At least 1 eligible pick comes from outside the US.
+Bangladesh and global scores use separate market dimensions, with no technology or founder-profile bonus. **Strong** starts at 8, **Promising** at 6.5 and **Watch** at 5. Shown scores round half up, and the verdict word always matches the number shown (7 is Promising, 8 is Strong). A funding round is evidence of demand, not traction: without stated users, customers or revenue, demand abroad stays at 7 or below. The digest normally has up to 3 Bangladesh and 2 global picks. On a slow day, Watch ideas fill it to at least 3 when eligible candidates exist. At least 1 eligible pick comes from outside the US.
 
 Effort is labelled separately: build type, capital (bootstrap, seed or venture), team size, licence route and time to revenue. Use `ambition any|lean|seed|venture` to filter the capital range. Unknown products are never shown.
 
