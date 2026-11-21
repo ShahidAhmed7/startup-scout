@@ -24,7 +24,7 @@ REQUIRED_ENV = [
     "GEMINI_API_KEY_BACKUP",
     "DATABASE_URL",
 ]
-OPTIONAL_ENV = ["HF_TOKEN", "ARCHIVE_PASSWORD", "FIRECRAWL_API_KEY"]
+OPTIONAL_ENV = ["HF_TOKEN", "ARCHIVE_PASSWORD", "FIRECRAWL_API_KEY", "QWEN_BASE_URL", "QWEN_API_KEY"]
 
 SOURCE_KINDS = {"rss", "api", "gnews", "gdelt", "trustmrr"}
 SOURCE_STATUSES = {"active", "spare", "flaky", "dead"}
