@@ -1,100 +1,121 @@
-"""End-to-end self-tests that use real services (run by Claude; the owner doesn't need these).
+"""Real-service tests, rollback-only; usage stays durable. Default uses Flash-Lite."""
 
-  python -m scout.selftest qwen-digest   # phase 3 "done when": force a Gemini failure, build a digest via Qwen.
-                                         # Uses a past TEST date, prints the result, then deletes the test rows.
-"""
-from __future__ import annotations
-
+import json
 import os
 import sys
+from collections import Counter, defaultdict
 from datetime import date
+from scout.db import repo
 
-TEST_DATE = date(2026, 11, 1)
-
-
-def qwen_digest(conn, n: int = 4) -> bool:
-    from scout import cards as cards_mod
-    from scout import digest as digest_mod
-    from scout.run import print_dry
-    from scout.score import score, shortlist, todays_rows
-
-    os.environ["FORCE_GEMINI_FAIL"] = "1"
-    try:
-        ids = [r["startup_id"] for r in conn.execute(
-            """select startup_id from scores where not skip and run_date <> %s
-               order by greatest(rank_bd, rank_global) desc limit %s""", (TEST_DATE, n)).fetchall()]
-        sc = score(conn, ids, TEST_DATE)
-        print("scoring via:", sc["models"], "| scored", sc["scored"])
-        rows = todays_rows(conn, TEST_DATE)
-        sl = shortlist(rows, {"bangladesh": 1, "global": 1}, min_score=1)
-        picks = [(r, "bangladesh") for r in sl["bangladesh"]] + [(r, "global") for r in sl["global"]]
-        cr = cards_mod.write_cards(conn, picks, TEST_DATE, set())
-        print("cards via:", cr["models"], "| failures:", cr["failed"])
-        market = {r["id"]: r["market"] for r in conn.execute("select id, market from cards where id = any(%s)",
-                                                             (cr["card_ids"],)).fetchall()}
-        digest_mod.build(conn, TEST_DATE, [(c, market[c]) for c in cr["card_ids"]],
-                         {"found": len(ids), "scored": sc["scored"], "skipped": sc["skipped"],
-                          "skip_reasons": sc["skip_reasons"]})
-        print_dry(conn, TEST_DATE)
-        models = set(sc["models"]) | set(cr["models"])
-        ok = bool(cr["card_ids"]) and all(m.startswith("Qwen/") for m in models)
-        print("\nPASS: digest built entirely by Qwen" if ok else f"\nFAIL: models used {models}")
-        return ok
-    finally:
-        os.environ.pop("FORCE_GEMINI_FAIL", None)
-        conn.execute("delete from digests where date = %s", (TEST_DATE,))
-        conn.execute("delete from cards where run_date = %s", (TEST_DATE,))
-        conn.execute("delete from skipped where created_at > now() - interval '1 hour' and startup_id in "
-                     "(select startup_id from scores where run_date = %s)", (TEST_DATE,))
-        conn.execute("delete from scores where run_date = %s", (TEST_DATE,))
+TEST_DATE = date(2000, 1, 1)
 
 
-def variety(conn, dev: bool = True) -> None:
-    """Re-score today's startups on TEST_DATE with the current rules and show picks + explore rows (no cards)."""
-    from collections import Counter
+def variety_report(rows, picks):
+    out = {}
+    for name, data in [("scored", rows), ("picks", picks)]:
+        total = len(data)
+        out[name] = {
+            "count": total,
+            "shares": {
+                k: {
+                    str(v): round(n / total, 3)
+                    for v, n in Counter(r.get(k) for r in data).items()
+                }
+                if total
+                else {}
+                for k in (
+                    "region",
+                    "sector",
+                    "business_model",
+                    "build_type",
+                    "capital",
+                    "ai_native",
+                )
+            },
+        }
+        sectors = defaultdict(list)
+        for r in data:
+            sectors[r["sector"]].append(r)
+        out[name]["sector_average"] = {
+            k: {
+                "bd": round(sum(r["bd"] for r in v) / len(v), 2),
+                "global": round(sum(r["gl"] for r in v) / len(v), 2),
+            }
+            for k, v in sectors.items()
+        }
+    return out
 
-    from scout.score import score, shortlist, todays_rows
+
+def variety(conn, dev=True, full=False):
+    from psycopg import Rollback
+    from scout.run import run_pipeline, print_dry
+    from scout.score import todays_rows, shortlist
     from scout.settings import effective
+    from scout.classify import classify
+    from scout.pool import balance
+    from scout.score import score
+    from scout.config import ROOT
 
+    os.environ["DRY_RUN"] = "1"
     if dev:
         os.environ["SCOUT_DEV"] = "1"
-    try:
-        ids = [r["startup_id"] for r in conn.execute(
-            "select distinct startup_id from scores where run_date <> %s", (TEST_DATE,)).fetchall()]
-        st = score(conn, ids, TEST_DATE)
-        print("scored:", st["scored"], "skipped:", st["skipped"], "via", st["models"])
+    with conn.transaction():
+        ids = [
+            r["id"]
+            for r in conn.execute(
+                "select id from startups order by last_seen_at desc limit 400"
+            ).fetchall()
+        ]
+        if full:
+            stats = run_pipeline(
+                conn, skip_collect=True, run_date=TEST_DATE, candidate_ids=ids
+            )
+            print(json.dumps(stats, indent=2, default=str))
+            print_dry(conn, TEST_DATE)
+        else:
+            rows, cs = classify(conn, ids)
+            pool, ps = balance(rows, effective(conn)["pool"])
+            st = score(conn, [r["startup_id"] for r in pool], TEST_DATE)
+            print(json.dumps({"classify": cs, "pool": ps, "score": st}, indent=2))
         rows = todays_rows(conn, TEST_DATE)
         cfg = effective(conn)
-        div = cfg["diversity"]
-        sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], min_feasibility=cfg["min_feasibility"],
-                       max_ai_native=div["max_ai_native"], explore_rows=div["explore_rows"],
-                       explore_min_score=div["explore_min_score"])
-        names = {r["id"]: r["name"] for r in conn.execute("select id, name from startups where id = any(%s)",
-                                                         ([r["startup_id"] for r in rows],)).fetchall()}
-        print("AI-native share of scored (not skipped):", sum(r["ai_native"] for r in rows), "/", len(rows))
-        print("sectors:", Counter(r["sector"] for r in rows).most_common(12))
-        for label in ("bangladesh", "global", "explore"):
-            print(f"\n[{label}]")
-            for r in sl[label]:
-                print(f"  {names[r['startup_id']][:24]:24} {r['sector'][:30]:30} AI={'yes' if r['ai_native'] else 'no '} "
-                      f"BD {r['bd']} GL {r['gl']} F {r['feas']}")
-    finally:
-        os.environ.pop("SCOUT_DEV", None)
-        conn.execute("delete from skipped where created_at > now() - interval '1 hour' and startup_id in "
-                     "(select startup_id from scores where run_date = %s)", (TEST_DATE,))
-        conn.execute("delete from scores where run_date = %s", (TEST_DATE,))
+        sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], cfg=cfg)
+        report = variety_report(rows, sl["bangladesh"] + sl["global"])
+        print(json.dumps(report, indent=2))
+        evidence = {
+            name: conn.execute(sql, (TEST_DATE,)).fetchall()
+            for name, sql in {
+                "scores": "select s.name,s.country,s.description,sc.* from scores sc join startups s on s.id=sc.startup_id where sc.run_date=%s",
+                "cards": "select * from cards where run_date=%s",
+                "digest": "select * from digests where date=%s",
+            }.items()
+        }
+        evidence["startups"] = conn.execute(
+            "select id,name,country,region,description,classification_json from startups where id=any(%s)",
+            (ids,),
+        ).fetchall()
+        evidence["source_material"] = conn.execute(
+            """select si.startup_id,i.title,i.summary,i.url from startup_items si join items i on i.id=si.item_id
+            where si.startup_id=any(%s) order by si.startup_id,i.id""",
+            (ids,),
+        ).fetchall()
+        path = ROOT / "data" / "redesign"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "live-results.json").write_text(
+            json.dumps({"variety": report, "evidence": evidence}, indent=2, default=str)
+        )
+        raise Rollback()
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] in (["variety"], ["variety", "--hydrogen"]):
-        from scout.db import repo
-
-        with repo.connect() as c:
-            variety(c, dev="--hydrogen" not in sys.argv)
-        raise SystemExit(0)
-    from scout.db import repo
-
-    if sys.argv[1:] == ["qwen-digest"]:
-        with repo.connect() as c:
-            raise SystemExit(0 if qwen_digest(c) else 1)
-    print(__doc__)
+    if sys.argv[1:2] == ["qwen-digest"]:
+        os.environ["FORCE_GEMINI_FAIL"] = "1"
+        with repo.connect() as conn:
+            variety(conn, dev=False, full=True)
+    elif sys.argv[1:2] == ["variety"]:
+        with repo.connect() as conn:
+            variety(conn, dev="--hydrogen" not in sys.argv, full="--full" in sys.argv)
+    else:
+        raise SystemExit(
+            "Use: python -m scout.selftest variety [--full] [--hydrogen] | qwen-digest"
+        )

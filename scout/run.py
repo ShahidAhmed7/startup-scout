@@ -1,155 +1,254 @@
-"""The daily pipeline (AGENTS.md section 8).
+"""Daily pipeline and rollback-only, real-service dry run."""
 
-  python -m scout.run --dry            # full run, prints today's digest and cards (nothing sent)
-  python -m scout.run --dry --dev      # same, but scoring/cards use Flash-Lite to save Hydrogen quota
-  python -m scout.run --dry --skip-collect --limit 30
-"""
 from __future__ import annotations
-
 import argparse
 import json
 import os
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
-from scout import cards as cards_mod
-from scout import digest as digest_mod
+from scout import cards as cards_mod, digest as digest_mod
 from scout.collect import collect
 from scout.db import repo
 from scout.dedupe import candidates, merge
 from scout.extract import extract
+from scout.classify import classify
+from scout.pool import balance
 from scout.score import score, shortlist, todays_rows
 from scout.settings import effective
 
 DHAKA = ZoneInfo("Asia/Dhaka")
-MAX_TO_SCORE = 120  # keeps Hydrogen inside its daily allowance (12 batches of 10)
 
 
 def today_dhaka():
     return datetime.now(DHAKA).date()
 
 
-def _priority_order(conn, ids: list[int]) -> list[int]:
-    """High-priority sources (YC/US) first, then buzz (number of sources)."""
-    rows = conn.execute(
-        """select si.startup_id, count(distinct i.source_id) as n,
-             bool_or(src.region = 'usa' or i.kind = 'yc') as us
-           from startup_items si join items i on i.id = si.item_id join sources src on src.id = i.source_id
-           where si.startup_id = any(%s) group by si.startup_id""", (ids,)).fetchall()
-    rank = {r["startup_id"]: (r["us"], r["n"]) for r in rows}
-    return sorted(ids, key=lambda i: rank.get(i, (False, 0)), reverse=True)
-
-
-def _after(conn, card_id: int, market: str) -> int | None:
-    d = conn.execute("select data_json from cards where id = %s", (card_id,)).fetchone()["data_json"] or {}
-    v = (d.get("score_check") or {}).get(market)
-    return int(v) if isinstance(v, (int, float)) else None
-
-
-def _check_and_swap(conn, cr, picks, reserve, run_date, new_round, cfg, max_swaps):
-    """After research: drop picks whose after-research score for their market fell below min_score (or whose card
-    failed), and fill each gap from the reserve for the same market, at most `max_swaps` extra cards."""
-    from scout.score import research_check
-
-    market_of = {r["startup_id"]: mk for r, mk in picks}
-    rows = conn.execute("select id, market from cards where id = any(%s) order by id", (cr["card_ids"],)).fetchall()
-    cards = [{"card_id": r["id"], "market": r["market"], "after": _after(conn, r["id"], r["market"])} for r in rows]
-    keep, drop = research_check(cards, cfg["min_score"])
-    gaps = [c["market"] for c in drop] + [market_of.get(sid, "bangladesh") for sid, _ in cr["failed"]]
+def _check_and_swap(conn, cr, picks, rows, run_date, new_round, cfg, max_swaps):
+    """Re-run the same selection rules after each research update, including replacements."""
+    pool = {r["startup_id"]: dict(r) for r in rows}
+    written = {}
+    failed = set()
     swaps = []
-    pool = list(reserve)
-    for market in gaps:
-        if len(swaps) >= max_swaps:
+
+    def ingest(result):
+        for sid, _ in result["failed"]:
+            failed.add(sid)
+        for cid in result["card_ids"]:
+            c = conn.execute("select * from cards where id=%s", (cid,)).fetchone()
+            d = c["data_json"]
+            j = d["scores_snapshot"]
+            sid = c["startup_id"]
+            old = pool[sid]
+            from scout.score import rank_scores
+
+            ranks = rank_scores(j, cfg)
+            old.update(
+                bd=j["bangladesh"],
+                gl=j["global"],
+                rank_bd=ranks["bangladesh"] + old.get("taste", 0),
+                rank_global=ranks["global"] + old.get("taste", 0),
+            )
+            written[sid] = c
+
+    ingest(cr)
+    for turn in range(max_swaps + 1):
+        sl = shortlist(
+            [r for sid, r in pool.items() if sid not in failed],
+            cfg["digest_mix"],
+            cfg["min_score"],
+            cfg=cfg,
+        )
+        wanted = sl["bangladesh"] + sl["global"]
+        missing = [r for r in wanted if r["startup_id"] not in written]
+        if not missing or turn == max_swaps:
             break
-        key = "bd" if market == "bangladesh" else "gl"
-        cand = next((r for r in pool if r[key] >= cfg["min_score"]), None)
-        if cand is None:
-            continue
-        pool.remove(cand)
-        extra = cards_mod.write_cards(conn, [(cand, market)], run_date, new_round)
-        for cid in extra["card_ids"]:
-            c = {"card_id": cid, "market": market, "after": _after(conn, cid, market)}
-            ok, _ = research_check([c], cfg["min_score"])
-            swaps.append({"in": cid, "kept": bool(ok)})
-            keep += ok
-    for c in drop:  # keep the card in the archive, marked as dropped after research
-        conn.execute("update cards set data_json = data_json || '{\"dropped_after_research\": true}'::jsonb "
-                     "where id = %s", (c["card_id"],))
-    keep, _ = research_check(keep, cfg["min_score"])  # re-sort by after-research score
-    return keep, swaps, cr["failed"]
+        r = missing[0]
+        extra = cards_mod.write_cards(conn, [(r, r["market"])], run_date, new_round)
+        ingest(extra)
+        swaps.append(
+            {
+                "startup_id": r["startup_id"],
+                "card_ids": extra["card_ids"],
+                "failed": extra["failed"],
+            }
+        )
+    # Only researched, successful cards may be in the final digest.
+    final_sl = shortlist(
+        [pool[sid] for sid in written if sid not in failed],
+        cfg["digest_mix"],
+        cfg["min_score"],
+        cfg=cfg,
+    )
+    final = []
+    kept = set()
+    for mk in ("bangladesh", "global"):
+        for row in final_sl[mk]:
+            c = written[row["startup_id"]]
+            d = c["data_json"]
+            d.update(
+                market=mk,
+                fill=row["fill"],
+                fill_reason=row["fill_reason"],
+                diversity_relaxed=row["diversity_relaxed"],
+            )
+            if c["market"] != mk:
+                d["one_liner"] = d["scores_snapshot"][
+                    "concept_bd" if mk == "bangladesh" else "concept_global"
+                ]
+            f = cards_mod.facts_for(conn, c["startup_id"])
+            body = cards_mod.card_text(f, d, c["model_id"], today_dhaka())
+            conn.execute(
+                "update cards set market=%s,body=%s,data_json=%s where id=%s",
+                (mk, body, json.dumps(d), c["id"]),
+            )
+            kept.add(c["id"])
+            final.append(
+                {
+                    "card_id": c["id"],
+                    "market": mk,
+                    "fill": row["fill"],
+                    "score": row["bd" if mk == "bangladesh" else "gl"],
+                }
+            )
+    for c in written.values():
+        if c["id"] not in kept:
+            conn.execute(
+                "update cards set data_json=data_json || '{\"dropped_after_research\":true}'::jsonb where id=%s",
+                (c["id"],),
+            )
+    # Explore selection must share the FINAL picks' diversity counters. Update candidate scores from research.
+    # Build explore against the actual final picks, not a stale pre-research shortlist.
+    from scout.score import exploration
+
+    explore = exploration(
+        list(pool.values()),
+        [
+            dict(pool[written_sid], market=written[written_sid]["market"])
+            for written_sid in written
+            if written[written_sid]["id"] in kept
+        ],
+        cfg,
+    )
+    return final, swaps, cr["failed"], explore
 
 
 def health_notes(conn) -> list[str]:
     """Sources failing 3 days in a row or empty for 7 days, mentioned once (AGENTS.md section 6)."""
     from scout import health
+
     return health.digest_notes(conn)
 
 
-def run_pipeline(conn, *, skip_collect: bool = False, limit: int | None = None, run_date=None) -> dict:
+def run_pipeline(
+    conn, *, skip_collect=False, limit=None, run_date=None, candidate_ids=None
+):
     run_date = run_date or today_dhaka()
-    run_id = repo.start_run(conn, "pipeline")
-    run_started = conn.execute("select started_at from runs where id = %s", (run_id,)).fetchone()["started_at"]
-    stats: dict = {"run_date": str(run_date)}
-    t0 = time.time()
+    rid = repo.start_run(conn, "pipeline")
+    started = conn.execute(
+        "select started_at from runs where id=%s", (rid,)
+    ).fetchone()["started_at"]
+    cfg = effective(conn)
+    t = time.time()
+    stats = {"run_date": str(run_date)}
     try:
         if not skip_collect:
-            c = collect(conn)
-            stats["collect"] = {k: v for k, v in c.items()}
+            stats["collect"] = collect(conn)
         ex = extract(conn)
         stats["extract"] = ex["stats"]
         m = merge(conn, ex["facts"])
-        stats["merge"] = {"touched": len(m["touched"]), "created": m["created"], "new_round": len(m["new_round"])}
-        cands = _priority_order(conn, candidates(conn, m["touched"], m["new_round"]))
-        cap = limit or MAX_TO_SCORE
-        stats["candidates"] = len(cands)
-        sc = score(conn, cands[:cap], run_date)
-        stats["score"] = sc
-        try:  # taste learning: never more than ±1, only after 3+ Save/Skip signals
-            from scout import taste
-            stats["taste"] = taste.apply(conn, run_date)
-        except Exception as e:
-            stats["taste"] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
-        cfg = effective(conn)
-        rows = todays_rows(conn, run_date)
-        div = cfg.get("diversity", {})
-        q = cfg.get("quality", {})
-        sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], min_feasibility=cfg.get("min_feasibility", 0),
-                       max_ai_native=div.get("max_ai_native"), explore_rows=div.get("explore_rows", 0),
-                       explore_min_score=div.get("explore_min_score", 5),
-                       low_confidence_penalty=q.get("low_confidence_penalty", 0.0))
-        picks = [(r, "bangladesh") for r in sl["bangladesh"]] + [(r, "global") for r in sl["global"]]
+        stats["merge"] = {k: len(v) if isinstance(v, set) else v for k, v in m.items()}
+        ids = (
+            candidate_ids
+            if candidate_ids is not None
+            else candidates(conn, m["touched"], m["new_round"])
+        )
+        if not ids and os.environ.get("DRY_RUN") == "1":
+            ids = [
+                r["id"]
+                for r in conn.execute(
+                    "select id from startups order by last_seen_at desc limit 300"
+                ).fetchall()
+            ]
+        stats["candidates"] = len(ids)
+        print(f"Classifying {len(ids)} candidates", flush=True)
+        classified, stats["classify"] = classify(conn, ids)
+        pool_cfg = dict(cfg["pool"])
+        if limit is not None:
+            pool_cfg["max_to_score"] = limit
+        selected, stats["pool"] = balance(classified, pool_cfg)
+        print("Balanced pool: " + json.dumps(stats["pool"]), flush=True)
+        stats["score"] = score(conn, [r["startup_id"] for r in selected], run_date)
+        print("Scoring: " + json.dumps(stats["score"]), flush=True)
+        if selected and not stats["score"]["scored"]:
+            raise RuntimeError("All scoring batches failed")
+        # Keep behavioural taste nudges, never alter displayed opportunity scores.
+        from scout import taste
+
+        stats["taste"] = taste.apply(conn, run_date)
+        from scout.novelty import apply
+
+        rows = apply(conn, todays_rows(conn, run_date), cfg)
+        for row in rows:
+            conn.execute(
+                "update scores set scores_json=scores_json || %s::jsonb where id=%s",
+                (
+                    json.dumps({"novelty_blocked": row.get("novelty_blocked", False)}),
+                    row["score_id"],
+                ),
+            )
+        sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], cfg=cfg)
+        picks = [(r, mk) for mk in ("bangladesh", "global") for r in sl[mk]]
+        print(f"Writing {len(picks)} researched cards", flush=True)
         cr = cards_mod.write_cards(conn, picks, run_date, m["new_round"])
-        final, swaps, failed = _check_and_swap(conn, cr, picks, sl["reserve"], run_date, m["new_round"], cfg,
-                                               q.get("max_research_swaps", 3))
-        stats["cards"] = len(final)
-        stats["card_failures"] = failed
-        stats["research_swaps"] = swaps
-        ordered = [c["card_id"] for c in final]
-        card_market = {c["card_id"]: c["market"] for c in final}
-        d = digest_mod.build(conn, run_date, [(cid, card_market[cid]) for cid in ordered],
-                             {"found": len(cands), "scored": sc["scored"], "skipped": sc["skipped"],
-                              "skip_reasons": sc["skip_reasons"]},
-                             notes=health_notes(conn), funding_since=run_started,
-                             explore=[r["startup_id"] for r in sl["explore"]])
+        final, swaps, failed, explore = _check_and_swap(
+            conn,
+            cr,
+            picks,
+            rows,
+            run_date,
+            m["new_round"],
+            cfg,
+            cfg["quality"]["max_research_swaps"],
+        )
+        if picks and not final:
+            raise RuntimeError("No researched cards passed")
+        stats.update(cards=len(final), card_failures=failed, research_swaps=swaps)
+        st = stats["classify"]
+        d = digest_mod.build(
+            conn,
+            run_date,
+            [(c["card_id"], c["market"]) for c in final],
+            {
+                "found": len(ids),
+                "scored": stats["score"]["scored"],
+                "skipped": st["skipped"],
+                "skip_reasons": st["skip_reasons"],
+                "watch_fills": sum(
+                    c["fill"] and c["score"] < cfg["min_score"] for c in final
+                ),
+            },
+            notes=health_notes(conn),
+            funding_since=started,
+            explore=[r["startup_id"] for r in explore],
+        )
         stats["digest_id"] = d["id"]
-        try:  # watches and saved-idea alerts, only on change (queued if the window is closed)
+        if os.environ.get("DRY_RUN") != "1":
             from scout import watches
-            stats["alerts"] = watches.check(conn, run_started)
-        except Exception as e:
-            stats["alerts"] = f"error: {type(e).__name__}: {str(e)[:120]}"
-        stats["items"] = stats.get("collect", {}).get("new_items", ex["stats"]["pending"])
-        stats["seconds"] = round(time.time() - t0)
-        repo.finish_run(conn, run_id, "ok", stats)
-        try:  # quality audit by Flash-Lite + code checks (owner's rule checker); never blocks the digest
-            from scout import audit
-            stats["audit"] = audit.audit(conn, run_date)["summary"]
-        except Exception as e:
-            stats["audit"] = f"error: {type(e).__name__}"
+
+            stats["alerts"] = watches.check(conn, started)
+        stats["items"] = stats.get("collect", {}).get(
+            "new_items", ex["stats"]["pending"]
+        )
+        stats["seconds"] = round(time.time() - t)
+        repo.finish_run(conn, rid, "ok", stats)
+        from scout import audit
+
+        stats["audit"] = audit.audit(conn, run_date)["summary"]
+        repo.finish_run(conn, rid, "ok", stats)
         return stats
-    except Exception as e:
-        stats["seconds"] = round(time.time() - t0)
-        repo.finish_run(conn, run_id, "error", stats, error=f"{type(e).__name__}: {str(e)[:300]}")
+    except Exception as exc:
+        repo.finish_run(conn, rid, "error", stats, error=type(exc).__name__)
         raise
 
 
@@ -171,12 +270,23 @@ def print_dry(conn, run_date) -> None:
         print("\n" + "=" * 70 + f"\nCARD {cid}\n" + "=" * 70)
         print(c["body"])
         print("\n[ Save ] [ Skip ] [ More ]")
+    if d["card_ids"]:
+        from scout.deepdive import deep_dive
+
+        text, _ = deep_dive(conn, d["card_ids"][0])
+        print("\nMORE (split into WhatsApp text messages)\n" + text)
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--dry", action="store_true", help="print the digest and cards (never sends)")
-    p.add_argument("--dev", action="store_true", help="use Flash-Lite instead of Hydrogen (saves quota)")
+    p.add_argument(
+        "--dry", action="store_true", help="print the digest and cards (never sends)"
+    )
+    p.add_argument(
+        "--dev",
+        action="store_true",
+        help="use Flash-Lite instead of Hydrogen (saves quota)",
+    )
     p.add_argument("--skip-collect", action="store_true")
     p.add_argument("--limit", type=int, default=None, help="max startups to score")
     a = p.parse_args()
@@ -184,10 +294,23 @@ def main() -> None:
         os.environ["SCOUT_DEV"] = "1"
     os.environ.setdefault("DRY_RUN", "1" if a.dry else os.environ.get("DRY_RUN", "0"))
     with repo.connect() as conn:
-        stats = run_pipeline(conn, skip_collect=a.skip_collect, limit=a.limit)
-        print(json.dumps(stats, indent=1, default=str))
         if a.dry:
-            print_dry(conn, today_dhaka())
+            from psycopg import Rollback
+
+            with conn.transaction():
+                # Use an isolated historical date; the entire pipeline transaction is rolled back.
+                from datetime import date
+
+                test_date = date(2000, 1, 1)
+                stats = run_pipeline(
+                    conn, skip_collect=a.skip_collect, limit=a.limit, run_date=test_date
+                )
+                print(json.dumps(stats, indent=1, default=str))
+                print_dry(conn, test_date)
+                raise Rollback()
+        else:
+            stats = run_pipeline(conn, skip_collect=a.skip_collect, limit=a.limit)
+            print(json.dumps(stats, indent=1, default=str))
 
 
 if __name__ == "__main__":
