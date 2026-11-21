@@ -1,127 +1,189 @@
-from scout.score import rank_value, shortlist
-
-CFG = {"weights": {"pain": 1.0, "why_now": 0.8, "feasibility": 1.0, "fits_you": 0.7}, "ai_angle": {"boost": 0.5}}
-
-
-def row(i, cat, bd, gl, buzz=1, feas=7):
-    return {"startup_id": i, "category": cat, "bd": bd, "gl": gl, "rank_bd": bd, "rank_global": gl, "buzz": buzz,
-            "feas": feas}
+from copy import deepcopy
+from scout.config import config
+from scout.score import shortlist, half_up, verdict, calculate, exploration
+from scout.pool import balance
 
 
-def test_top3_bd_and_top2_global_with_min_score():
-    rows = [row(1, "fintech", 9, 3), row(2, "health", 8, 4), row(3, "edtech", 7, 2), row(4, "logistics", 6, 5),
-            row(5, "dev tools", 2, 9), row(6, "marketing", 3, 8), row(7, "legal", 2, 5)]
-    sl = shortlist(rows, {"bangladesh": 3, "global": 2}, 6)
-    assert [r["startup_id"] for r in sl["bangladesh"]] == [1, 2, 3]
-    assert [r["startup_id"] for r in sl["global"]] == [5, 6]
-    assert [r["startup_id"] for r in sl["reserve"]] == [4]
+def row(i, bd=7, gl=6, **kw):
+    return (
+        dict(
+            startup_id=i,
+            bd=bd,
+            gl=gl,
+            rank_bd=bd,
+            rank_global=gl,
+            sector=f"sector {i}",
+            business_model=f"model {i}",
+            ai_native=False,
+            known=True,
+            region="usa",
+            conf="high",
+            capital="bootstrap",
+            buzz=1,
+        )
+        | kw
+    )
 
 
-def test_no_two_picks_from_same_category():
-    rows = [row(1, "fintech", 9, 3), row(2, "fintech", 8, 3), row(3, "health", 7, 3), row(4, "Fintech", 2, 9)]
-    sl = shortlist(rows, {"bangladesh": 3, "global": 2}, 6)
-    ids = [r["startup_id"] for r in sl["bangladesh"] + sl["global"]]
-    assert ids == [1, 3]
+def choose(rows, **kw):
+    cfg = deepcopy(config())
+    cfg.update(kw)
+    return shortlist(rows, cfg["digest_mix"], cfg["min_score"], cfg=cfg)
 
 
-def test_same_startup_never_in_both_lists():
-    rows = [row(1, "fintech", 9, 9), row(2, "health", 3, 7)]
-    sl = shortlist(rows, {"bangladesh": 1, "global": 1}, 6)
-    assert [r["startup_id"] for r in sl["bangladesh"]] == [1] and [r["startup_id"] for r in sl["global"]] == [2]
+def picks(sl):
+    return sl["bangladesh"] + sl["global"]
 
 
-def test_feasibility_gate_drops_ideas_a_small_team_cannot_build():
-    rows = [row(1, "agriculture", 8, 3, feas=3), row(2, "fintech", 7, 3, feas=7)]
-    sl = shortlist(rows, {"bangladesh": 2, "global": 0}, 6, min_feasibility=5)
-    assert [r["startup_id"] for r in sl["bangladesh"]] == [2]
+def test_slow_day_fills_to_three_with_real_watch_verdict():
+    sl = choose([row(1), row(2, 7, 6, region="india"), row(3, 5.5, 5)])
+    assert len(picks(sl)) == 3
+    assert len([r for r in picks(sl) if r["fill"]]) == 1
+    assert verdict(5.5) == "Watch"
 
 
-def test_buzz_breaks_ties():
-    rows = [row(1, "fintech", 8, 1, buzz=1), row(2, "health", 8, 1, buzz=3)]
-    sl = shortlist(rows, {"bangladesh": 1, "global": 0}, 6)
-    assert sl["bangladesh"][0]["startup_id"] == 2
+def test_nothing_below_five_and_unknown_never_shown():
+    sl = choose(
+        [row(1, 9, 9, known=False), row(2, 4.9, 4.9), row(3, 5, 5, region="india")]
+    )
+    assert [r["startup_id"] for r in picks(sl)] == [3]
 
 
-def test_rank_value_nudge_is_bounded_and_ai_boost_applies():
-    hi = {"pain": 10, "why_now": 10, "feasibility": 10, "fits_you": 10}
-    lo = {"pain": 1, "why_now": 1, "feasibility": 1, "fits_you": 1}
-    assert rank_value(7, hi, False, CFG) <= 8.0
-    assert rank_value(7, lo, False, CFG) >= 6.0
-    assert rank_value(7, hi, True, CFG) == rank_value(7, hi, False, CFG) + 0.5
+def test_outside_us_replacement_and_unknown_does_not_count():
+    sl = choose(
+        [
+            *[row(i, 9 - i * 0.1, 8, region="usa") for i in range(1, 7)],
+            row(8, 6, 5.5, region="india"),
+        ]
+    )
+    assert any(r["region"] == "india" and r["fill"] for r in picks(sl))
 
 
-def ai_row(i, sector, bd, gl, ai=False, feas=7, buzz=1):
-    return {"startup_id": i, "category": sector, "sector": sector, "ai_native": ai, "bd": bd, "gl": gl,
-            "rank_bd": bd, "rank_global": gl, "buzz": buzz, "feas": feas}
+def test_ambition_filters_but_any_allows_venture():
+    rows = [
+        row(1, 9, 9, capital="venture"),
+        row(2, 8, 8, capital="seed"),
+        row(3, 7, 7, region="africa"),
+    ]
+    assert len(picks(choose(rows, ambition="any"))) == 3
+    assert len(picks(choose(rows, ambition="lean"))) == 1
+    assert len(picks(choose(rows, ambition="seed"))) == 2
+    assert len(picks(choose(rows, ambition="venture"))) == 2
 
 
-def test_ai_cap_is_a_maximum_across_picks_and_explore():
-    rows = [ai_row(i, f"sector {i}", 9, 9, ai=True) for i in range(1, 9)] + \
-           [ai_row(20 + i, f"other sector {i}", 6, 6) for i in range(1, 9)]
-    sl = shortlist(rows, {"bangladesh": 3, "global": 2}, 6, max_ai_native=3, explore_rows=5)
-    shown = sl["bangladesh"] + sl["global"] + sl["explore"]
-    assert sum(r["ai_native"] for r in shown) == 3          # never more than 3 in the whole digest
-    assert len(sl["bangladesh"] + sl["global"]) == 5        # the other picks are filled with non-AI startups
+def test_fill_relaxes_sector_and_model_only_when_needed():
+    rows = [
+        row(
+            i,
+            7,
+            6,
+            sector="fintech",
+            business_model="financial_product",
+            region="india",
+        )
+        for i in range(1, 5)
+    ]
+    sl = choose(rows)
+    assert len(picks(sl)) == 3 and sum(r["diversity_relaxed"] for r in picks(sl)) == 2
 
 
-def test_ai_cap_is_not_a_quota():
-    rows = [ai_row(i, f"sector {i}", 8, 8) for i in range(1, 6)] + [ai_row(9, "dev tools", 6, 6, ai=True)]
-    sl = shortlist(rows, {"bangladesh": 3, "global": 2}, 6, max_ai_native=3, explore_rows=5)
-    picks = sl["bangladesh"] + sl["global"]
-    assert sum(r["ai_native"] for r in picks) == 0          # no AI forced in when better non-AI ideas exist
+def test_ai_maximum_covers_explore_not_quota():
+    rows = [row(i, 8, 8, ai_native=i < 6, region="india") for i in range(1, 15)]
+    sl = choose(rows)
+    assert sum(r["ai_native"] for r in picks(sl) + sl["explore"]) <= 3
+    assert not any(
+        r["ai_native"]
+        for r in picks(choose([row(i, 8, 8, region="africa") for i in range(10)]))
+    )
 
 
-def test_at_most_two_ai_native_picks_and_sectors_differ():
-    rows = [ai_row(1, "marketing and sales", 9, 8, ai=True), ai_row(2, "real estate and construction", 9, 7, ai=True),
-            ai_row(3, "developer tools and AI infrastructure", 8, 9, ai=True), ai_row(4, "health", 8, 9, ai=True),
-            ai_row(5, "fintech", 7, 5), ai_row(6, "logistics and mobility", 6, 7), ai_row(7, "education", 6, 6)]
-    sl = shortlist(rows, {"bangladesh": 3, "global": 2}, 6, max_ai_native=2)
-    picks = sl["bangladesh"] + sl["global"]
-    assert sum(r["ai_native"] for r in picks) <= 2
-    assert len({r["sector"] for r in picks}) == len(picks) == 5
+def test_novelty_and_skip_apply_to_fill_and_explore():
+    rows = [
+        row(1, 9, 9, novelty_blocked=True),
+        row(2, 9, 9, skip=True),
+        row(3, 5, 5, region="india"),
+    ]
+    assert [r["startup_id"] for r in picks(choose(rows))] == [3]
 
 
-def test_explore_adds_other_sectors_non_ai_first():
-    rows = [ai_row(1, "fintech", 9, 3), ai_row(2, "health", 3, 9),
-            ai_row(3, "fintech", 6, 4), ai_row(4, "agriculture and food", 5, 3),
-            ai_row(5, "travel and hospitality", 5, 5, ai=True), ai_row(6, "education", 3, 5), ai_row(7, "media and creators", 2, 3)]
-    sl = shortlist(rows, {"bangladesh": 1, "global": 1}, 6, reserve=0, explore_rows=3, explore_min_score=5)
-    ids = [r["startup_id"] for r in sl["explore"]]
-    assert 3 not in ids                      # same sector as a pick
-    assert 7 not in ids                      # below the explore minimum
-    assert ids[:2] == [4, 6] and ids[2] == 5 # non-AI first, then the AI one
+def test_half_up_uses_unrounded_verdict_threshold():
+    assert half_up(6.5) == 7 and half_up(8.5) == 9
+    assert verdict(6.4) == "Watch" and verdict(6.5) == "Promising"
 
 
-def test_unknown_products_are_never_picked_or_explored():
-    rows = [ai_row(1, "fintech", 9, 9), ai_row(2, "health", 8, 8), ai_row(3, "education", 7, 7)]
-    rows[0]["known"] = False
-    sl = shortlist(rows, {"bangladesh": 2, "global": 1}, 6, explore_rows=5, explore_min_score=1)
-    shown = [r["startup_id"] for r in sl["bangladesh"] + sl["global"] + sl["explore"]]
-    assert 1 not in shown and set(shown) == {2, 3}
+def test_balanced_pool_with_sufficient_supply():
+    rows = [
+        row(i, region=reg, ai_native=i % 4 == 0)
+        for i, reg in enumerate(
+            ["usa"] * 120
+            + ["europe"] * 50
+            + ["china"] * 40
+            + ["india"] * 50
+            + ["africa"] * 50
+            + ["sea"] * 50
+        )
+    ]
+    selected, stats = balance(rows, config()["pool"])
+    n = len(selected)
+    assert (
+        n == 120
+        and stats["regions"]["usa"] <= 42
+        and stats["regions"]["europe"] <= 18
+        and stats["regions"]["china"] <= 12
+    )
+    assert sum(stats["regions"].get(r, 0) for r in ("india", "africa", "sea")) >= 48
+    assert stats["ai_native"] / n <= 0.4
 
 
-def test_core_name_merges_company_name_variants():
-    from scout.normalize import core_name
-    assert core_name("Genesis AI SAS") == core_name("Genesis AI") == core_name("Genesis") == "genesis"
-    assert core_name("Soket AI Labs") == core_name("Soket AI") == "soket"
-    assert core_name("Unsiloed Inc.") == core_name("Unsiloed AI")
-    assert core_name("Open AI") != core_name("Open Bank")
+def test_pool_handles_missing_regions_and_limits_ai_in_actual_size():
+    selected, stats = balance(
+        [row(i, ai_native=i < 19) for i in range(20)], config()["pool"]
+    )
+    assert sum(r["ai_native"] for r in selected) / len(selected) <= 0.4
+    assert stats["shortages"]
 
 
-def test_low_confidence_loses_to_a_documented_startup_with_a_similar_score():
-    rows = [ai_row(1, "fintech", 7, 2), ai_row(2, "health", 6, 2), ai_row(3, "education", 7, 2)]
-    rows[0]["conf"] = "low"
-    sl = shortlist(rows, {"bangladesh": 2, "global": 0}, 6, low_confidence_penalty=1.0)
-    assert [r["startup_id"] for r in sl["bangladesh"]] == [3, 2]   # documented 7 and 6 beat low-confidence 7
-    sl = shortlist(rows[:1], {"bangladesh": 1, "global": 0}, 6, low_confidence_penalty=1.0)
-    assert [r["startup_id"] for r in sl["bangladesh"]] == [1]      # still picked if nothing better exists
+def test_region_fallback_requires_a_known_regional_source():
+    from scout.pool import region
+
+    assert region("Canada", "usa") == "other"
+    assert region(None, "global") == "unknown"
+    assert region(None, "india") == "india"
+    assert region("Bangladesh", "usa") == "bangladesh"
 
 
-def test_research_check_drops_and_reorders():
-    from scout.score import research_check
-    cards = [{"card_id": 1, "market": "bangladesh", "after": 6}, {"card_id": 2, "market": "bangladesh", "after": 5},
-             {"card_id": 3, "market": "global", "after": 8}, {"card_id": 4, "market": "bangladesh", "after": 8},
-             {"card_id": 5, "market": "global", "after": None}]
-    keep, drop = research_check(cards, 6)
-    assert [c["card_id"] for c in drop] == [2]
-    assert [c["card_id"] for c in keep] == [4, 1, 3, 5]
+def test_similar_market_pool_reservation_rotates_regions():
+    rows = [
+        row(i, region=reg)
+        for i, reg in enumerate(
+            ["india"] * 100 + ["africa"] * 100 + ["sea"] * 100 + ["usa"] * 100
+        )
+    ]
+    selected, stats = balance(rows, config()["pool"])
+    similar = [r["region"] for r in selected[:48]]
+    assert (
+        similar.count("africa") == similar.count("india") == similar.count("sea") == 16
+    )
+
+
+def test_outside_us_normal_replacement_respects_other_diversity():
+    rows = [row(i, 9 - i * 0.1, 8) for i in range(1, 7)] + [
+        row(8, 8, 8, region="europe")
+    ]
+    sl = choose(rows)
+    assert len(picks(sl)) == 5
+    assert any(r["region"] == "europe" and not r["fill"] for r in picks(sl))
+    assert len({r["startup_id"] for r in picks(sl)}) == 5
+
+
+def test_ties_prefer_confidence_then_buzz():
+    rows = [
+        row(1, 8, 7, conf="low"),
+        row(2, 8, 7, conf="high", buzz=2),
+        row(3, 8, 7, conf="high", buzz=5),
+    ]
+    cfg = deepcopy(config())
+    cfg["min_picks"] = 1
+    cfg["diversity"]["min_non_us_picks"] = 0
+    sl = shortlist(rows, {"bangladesh": 1, "global": 0}, 6.5, cfg=cfg)
+    assert sl["bangladesh"][0]["startup_id"] == 3

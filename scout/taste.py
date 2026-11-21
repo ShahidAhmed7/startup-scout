@@ -10,10 +10,10 @@ import math
 
 import httpx
 
-from scout.config import env
+from scout.config import env, config
 from scout.db import repo
 
-EMBED_MODEL = "gemini-embedding-2"
+EMBED_MODEL = config()["embedding_model"]
 DIMS = 768
 MIN_SIGNALS = 3
 STRENGTH = 4.0  # similarity difference -> points (then clamped to ±1)
