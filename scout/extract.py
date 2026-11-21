@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 
 from scout.config import sources
-from scout.llm import prompts, router
+from scout.llm import prompts, run as ai
 
 BATCH = 10
 FUNDING_WORDS = re.compile(
@@ -74,7 +74,7 @@ def extract(conn, limit: int | None = None) -> dict:
     prompt_list = [prompts.extract_prompt([{"id": it["id"], "source": src.get(it["source_id"], {}).get("name"),
                                             "title": it["title"], "summary": (it["summary"] or "")[:1200]}
                                            for it in b]) for b in batches]
-    outs = router.complete_many("extract", prompt_list, schema=prompts.EXTRACT_SCHEMA,
+    outs = ai.run_many("extract", prompt_list, output_type=prompts.EXTRACT_SCHEMA,
                                 system=prompts.SYSTEM, conn=conn)
     for batch, out in zip(batches, outs):
         if isinstance(out, Exception):

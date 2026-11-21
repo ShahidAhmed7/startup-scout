@@ -88,6 +88,9 @@ def merge(conn, facts: list[tuple[dict, dict, str]]) -> dict:
         if is_new:
             created_now.add(sid)
         touched.add(sid)
+        import json
+        conn.execute("update startups set extraction_json = coalesce(extraction_json, '{}'::jsonb) || %s::jsonb where id=%s",
+                     (json.dumps({k:c[k] for k in ('business_model_hint','customer_hint','traction') if c.get(k)}),sid))
         conn.execute("insert into startup_items (startup_id, item_id) values (%s, %s) on conflict do nothing",
                      (sid, item["id"]))
         _, fresh = add_round(conn, sid, c, item["url"], item.get("published_at"))

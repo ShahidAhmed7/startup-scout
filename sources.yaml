@@ -31,13 +31,13 @@ sources:
      url: "https://techcrunch.com/category/venture/feed/"}
   - {id: techcrunch_startups, name: "TechCrunch Startups", kind: rss, region: usa, role: funding, priority: high, status: active,
      url: "https://techcrunch.com/category/startups/feed/"}
-  - {id: techcrunch_ai, name: "TechCrunch AI", kind: rss, region: usa, role: funding, priority: normal, status: active,
+  - {id: techcrunch_ai, name: "TechCrunch AI", kind: rss, region: usa, role: funding, priority: normal, status: spare,
      url: "https://techcrunch.com/category/artificial-intelligence/feed/"}
   - {id: crunchbase_news, name: "Crunchbase News", kind: rss, region: usa, role: funding, priority: high, status: active,
      url: "https://news.crunchbase.com/feed/"}
-  - {id: saas_news, name: "The SaaS News", kind: rss, region: usa, role: funding, priority: high, status: active,
+  - {id: saas_news, name: "The SaaS News", kind: rss, region: usa, role: funding, priority: normal, status: active,
      url: "https://www.thesaasnews.com/feed", note: "Almost every item is a funding round."}
-  - {id: siliconangle, name: "SiliconANGLE", kind: rss, region: usa, role: funding, priority: high, status: active,
+  - {id: siliconangle, name: "SiliconANGLE", kind: rss, region: usa, role: funding, priority: normal, status: active,
      url: "https://siliconangle.com/feed/"}
   - {id: tech_funding_news, name: "Tech Funding News", kind: rss, region: global, role: funding, priority: high, status: active,
      url: "https://techfundingnews.com/feed/"}
