@@ -186,6 +186,18 @@ def unsupported_anchors(sentence: str, material: str, own_name: str) -> list[str
     return bad
 
 
+# Sentence ends: punctuation, then a capitalised word, but not after common abbreviations
+# ("Tk. 1,500", "e.g. Paddle"), so prices and examples stay with their sentence.
+_SENT_END = re.compile(
+    r"(?<!\bTk\.)(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\bvs\.)(?<!\bInc\.)(?<!\bLtd\.)(?<!\bCo\.)"
+    r"(?<!\bapprox\.)(?<!\bSt\.)(?<!\bDr\.)(?<!\bMr\.)(?<!\bMs\.)(?<=[.!?])\s+(?=[A-Z\"'(*_\[])"
+)
+
+
+def sentences(text: str) -> list[str]:
+    return [p for p in _SENT_END.split((text or "").strip()) if p]
+
+
 def fact_gate(
     card: dict, material: str, own_name: str, fallback_what: str | None
 ) -> tuple[dict, list[str]]:
@@ -193,7 +205,7 @@ def fact_gate(
     fixed, removed = dict(card), []
     for field in ("what_they_do", "evidence" if "evidence" in card else "why_funded"):
         keep = []
-        for sent in re.split(r"(?<=[.!?])\s+", (card.get(field) or "").strip()):
+        for sent in sentences(card.get(field) or ""):
             bad = unsupported_anchors(sent, material, own_name) if sent else []
             if bad:
                 removed.append(f"{field}: {sent} (not in sources: {', '.join(bad)})")
@@ -307,7 +319,7 @@ def card_text(f, data, model_id, today, new_round=False):
     effort_text = f"{effort['build_type'].replace('_', ' ')} · {effort['capital']} · team {effort['team']} · {effort['licence'] if effort['licence'].lower() != 'none' else 'no licence'} · revenue in {effort['time_to_revenue']}"
     market = data.get("market", "bangladesh")
     play = data["bangladesh_play" if market == "bangladesh" else "global_play"]
-    play = " ".join(re.split(r"(?<=[.!?])\s+", play)[:2])
+    play = " ".join(sentences(play)[:2])
     idea = " ".join(data["one_liner"].split()[:15])
     from scout.normalize import place_label
 

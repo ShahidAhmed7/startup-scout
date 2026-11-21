@@ -281,3 +281,22 @@ def test_hidden_trustmrr_listing_is_never_a_known_product():
 
     assert hidden_listing("Stealth Company") and hidden_listing(" stealth startup")
     assert not hidden_listing("Redstring: Murder Mystery") and not hidden_listing("Stealthy Socks Ltd")
+
+
+def test_sentences_keep_prices_and_examples_together():
+    from scout.cards import sentences
+
+    text = "The offer is financing at Tk. 1,500 per month. Sell via e.g. Paddle. Raised $2.5M."
+    assert sentences(text) == [
+        "The offer is financing at Tk. 1,500 per month.",
+        "Sell via e.g. Paddle.",
+        "Raised $2.5M.",
+    ]
+
+
+def test_row_title_drops_trailing_note_before_cutting_the_name():
+    from scout.whatsapp.formats import row_title
+
+    assert row_title("Archer (formerly hackajob)", "BD 7") == "Archer · BD 7"
+    assert row_title("Mission Mobile", "BD 7") == "Mission Mobile · BD 7"
+    assert len(row_title("A Very Long Company Name Here", "Global 8")) <= 24

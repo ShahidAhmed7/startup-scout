@@ -154,6 +154,11 @@ def row_title(name: str, label: str) -> str:
     """'{Name} · BD 8' within 24 chars: shorten the name, never the score."""
     suffix = f" · {label}"
     room = LIMITS["row_title"] - len(suffix)
+    if len(name) > room:
+        # "Archer (formerly hackajob)" -> "Archer": a trailing note is the first thing to go.
+        import re
+
+        name = re.sub(r"\s*\([^)]*\)\s*$", "", name) or name
     short = name if len(name) <= room else name[: max(1, room - 1)].rstrip() + "…"
     return short + suffix
 
