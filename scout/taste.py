@@ -19,6 +19,13 @@ MIN_SIGNALS = 3
 STRENGTH = 4.0  # similarity difference -> points (then clamped to ±1)
 
 
+def _record(label: str, status: str) -> None:
+    # Own connection, like every model call: a rolled-back dry run must still record its quota use.
+    with repo.connect() as own:
+        repo.record_usage(own, provider="gemini", model_id=EMBED_MODEL, key_label=label, kind="embed",
+                          status=status)
+
+
 def embed_texts(texts: list[str], conn=None) -> list[list[float]] | None:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBED_MODEL}:batchEmbedContents"
     for label, env_name in (("main", "GEMINI_API_KEY_MAIN"), ("backup", "GEMINI_API_KEY_BACKUP")):
@@ -34,13 +41,11 @@ def embed_texts(texts: list[str], conn=None) -> list[list[float]] | None:
                 r.raise_for_status()
                 out += [e["values"] for e in r.json()["embeddings"]]
             if conn is not None:
-                repo.record_usage(conn, provider="gemini", model_id=EMBED_MODEL, key_label=label, kind="embed",
-                                  status="ok")
+                _record(label, "ok")
             return out
         except Exception:
             if conn is not None:
-                repo.record_usage(conn, provider="gemini", model_id=EMBED_MODEL, key_label=label, kind="embed",
-                                  status="server")
+                _record(label, "server")
     return None
 
 
