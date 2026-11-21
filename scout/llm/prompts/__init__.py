@@ -1,343 +1,128 @@
-"""Prompts and JSON schemas for every LLM job. Rubric = AGENTS.md section 9."""
-from __future__ import annotations
+"""Neutral, evidence-grounded prompts. Outputs are Pydantic models."""
 
-SYSTEM = (
-    "You are the analyst behind Startup Scout, a private research tool for one founder in Bangladesh "
-    "whose field is AI (they cannot build frontier AI labs, chips, hardware or data centres). "
-    "Write in plain, short English with normal capitalisation: numbers as digits, no hype words, sentence case. "
-    "Every output must be in English, even when the source text is in Chinese, Arabic or another language. "
-    "Never invent facts. Facts (funding, what a company does, competitors, market facts) may only come from "
-    "the material you are given. If something is not in the material, write \"unknown\"."
+import json
+from scout.llm.schemas import (
+    Extraction as EXTRACT_SCHEMA,
+    Classification as CLASSIFY_SCHEMA,
+    Scoring as SCORE_SCHEMA,
 )
+from scout.llm.schemas import (
+    Card as CARD_SCHEMA,
+    DeepDive as DEEP_SCHEMA,
+    Kit as KIT_SCHEMA,
+    Ask as ASK_SCHEMA,
+    Assumptions as ASSUMPTIONS_SCHEMA,
+)
+from scout.llm.schemas import Sector
+from typing import get_args
 
-# ---------------------------------------------------------------- extraction (Flash-Lite)
+SECTORS = list(get_args(Sector))
 
-EXTRACT_SCHEMA = {
-    "type": "object",
-    "properties": {"articles": {"type": "array", "items": {
-        "type": "object",
-        "properties": {
-            "item_id": {"type": "integer"},
-            "kind": {"type": "string", "enum": ["funding", "launch", "other"]},
-            "companies": {"type": "array", "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "website": {"type": "string"},
-                    "country": {"type": "string"},
-                    "stage": {"type": "string"},
-                    "amount_text": {"type": "string"},
-                    "amount_usd": {"type": "number"},
-                    "investors": {"type": "array", "items": {"type": "string"}},
-                    "what_they_do": {"type": "string"},
-                },
-                "required": ["name", "website", "country", "stage", "amount_text", "amount_usd", "investors",
-                             "what_they_do"],
-            }},
-        },
-        "required": ["item_id", "kind", "companies"],
-    }}},
-    "required": ["articles"],
-}
+SYSTEM = 'You are a senior venture analyst at a startup studio. The studio adapts business models that have been proven\nelsewhere to Bangladesh, and builds companies in Bangladesh that sell to customers abroad. You assess\nopportunities in every sector (finance, logistics, health, education, agriculture, commerce, industry, climate,\nsoftware and consumer) with no preference for any technology, business model or company size.\n\nWrite plain, short English with normal capitalisation, numbers as digits and no hype. Write in English even\nwhen the sources are in another language.\n\nFacts (funding, what a company does, traction, competitors, regulations, market figures) may only come from the\nmaterial you are given. If a fact is not in the material, write "unknown". Your own estimates and reasoning are\nwelcome when they are clearly marked as estimates.'
 
 
 def extract_prompt(articles: list[dict]) -> str:
     lines = [
         "Read these news items and pull out startup facts. Rules:",
-        "- Use ONLY what each item's text says. No facts from memory. Unknown text fields = \"\", unknown "
+        '- Use ONLY what each item\'s text says. No facts from memory. Unknown text fields = "", unknown '
         "amount_usd = 0, unknown investors = [].",
         "- Translate everything to English. Keep company names as written (add the Latin-script name if the "
         "item gives one).",
-        "- kind: \"funding\" = a startup raised money (pre-seed, seed, Series A..., venture debt, grant); "
-        "\"launch\" = a young startup launching its first product or coming out of stealth (YC, Launch HN, new "
-        "company); \"other\" = anything else: VC funds closing, IPOs, acquisitions, big or established companies "
+        '- kind: "funding" = a startup raised money (pre-seed, seed, Series A..., venture debt, grant); '
+        '"launch" = a young startup launching its first product or coming out of stealth (YC, Launch HN, new '
+        'company); "other" = anything else: VC funds closing, IPOs, acquisitions, big or established companies '
         "(OpenAI, Google, banks, telecoms) releasing products, media outlets launching sections, policy, opinion, "
-        "events. For \"other\" return no companies.",
+        'events. For "other" return no companies.',
         "- companies: only the startup(s) that raised money or launched, never the investors.",
-        "- country: where the startup is based, only if the item says so (e.g. \"Lagos-based\" = Nigeria).",
-        "- stage: Pre-seed, Seed, Series A, Series B..., Bridge, Debt, Grant, or \"\" if not stated.",
-        "- amount_text: the money raised in this round (never the valuation), exactly as written (\"₹50 crore\", \"$4M\"). amount_usd: a number only if the "
+        '- country: where the startup is based, only if the item says so (e.g. "Lagos-based" = Nigeria).',
+        '- stage: Pre-seed, Seed, Series A, Series B..., Bridge, Debt, Grant, or "" if not stated.',
+        '- amount_text: the money raised in this round (never the valuation), exactly as written ("₹50 crore", "$4M"). amount_usd: a number only if the '
         "item states a US-dollar amount (e.g. 4000000), else 0.",
         "- website: only if the item text contains it.",
         "- what_they_do: what the company sells or does (not the news event), one plain sentence, at most 20 words, "
         "from the item text.",
+        "- business_model_hint: how it makes money, only if stated; else empty. customer_hint: who pays, only if stated; else empty. traction: stated users, revenue or growth only; else empty.",
         "Return one entry per item id.",
         "",
     ]
     for a in articles:
-        lines.append(f"ITEM {a['id']} (source: {a['source']})\nTitle: {a['title']}\nText: {a['summary']}\n")
+        lines.append(
+            f"ITEM {a['id']} (source: {a['source']})\nTitle: {a['title']}\nText: {a['summary']}\n"
+        )
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- scoring + skip filter (Hydrogen)
-
-SCORE_KEYS = ["bangladesh", "global", "pain", "why_now", "feasibility", "fits_you"]
-
-# Broad sectors, so the daily picks can be spread across the economy (not five flavours of AI software).
-SECTORS = ["fintech", "commerce and retail", "logistics and mobility", "health", "education", "agriculture and food",
-           "travel and hospitality", "real estate and construction", "jobs and HR", "media and creators",
-           "marketing and sales", "productivity and business software", "developer tools and AI infrastructure",
-           "security", "legal and government", "climate and energy", "manufacturing and industry",
-           "consumer and social", "other"]
-
-SCORE_SCHEMA = {
-    "type": "object",
-    "properties": {"startups": {"type": "array", "items": {
-        "type": "object",
-        "properties": {
-            "startup_id": {"type": "integer"},
-            "category": {"type": "string"},
-            "sector": {"type": "string", "enum": SECTORS},
-            "ai_native": {"type": "boolean"},
-            "search_phrase": {"type": "string"},
-            "skip": {"type": "boolean"},
-            "skip_reason": {"type": "string"},
-            "scores": {"type": "object", "properties": {k: {"type": "integer"} for k in SCORE_KEYS},
-                       "required": SCORE_KEYS},
-            "money_to_start": {"type": "string", "enum": ["low", "medium", "high"]},
-            "reasons": {"type": "object",
-                        "properties": {k: {"type": "string"} for k in SCORE_KEYS + ["money_to_start"]},
-                        "required": SCORE_KEYS + ["money_to_start"]},
-            "ai_angle": {"type": "string"},
-            "ai_angle_strong": {"type": "boolean"},
-            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-        },
-        "required": ["startup_id", "category", "sector", "ai_native", "search_phrase", "skip", "skip_reason", "scores",
-                     "money_to_start", "reasons", "ai_angle", "ai_angle_strong", "confidence"],
-    }}},
-    "required": ["startups"],
-}
-
-RUBRIC = """Score each startup twice. Each score is an integer 1-10 with a one-line reason.
-Missing information lowers confidence, not the score: set "confidence": "low".
-The owner is a 2-3 person team in Bangladesh with these skills: {skills}. Score the VERSION that team could
-build, not the funded startup's own market: a US tool for dentists can still be a good Bangladesh idea if Dhaka
-clinics have the same problem. Be honest and calibrated: most startups land around 3-6; reserve 8-10 for ideas
-the owner should seriously consider this month.
-
-Shared sub-scores:
-- pain: how badly the customer needs this, as evidenced by the material.
-- why_now: what changed recently that makes this possible or urgent.
-- feasibility: can 2-3 people build a first version in about 2 months, with no special hardware, licences,
-  physical operations (warehouses, fleets, farms, factories) or big data deals? 8-10 = pure software they could
-  ship; 4-6 = possible but hard (deep integrations, trust, data access); 1-3 = needs capital, hardware, licences
-  or physical operations.
-- money_to_start: low / medium / high, with a short reason.
-- fits_you: can a small software team with the owner's skills build it? The owner can build any software product
-  (web apps, mobile-friendly sites, marketplaces, booking/ordering/payment tools, dashboards); AI is a plus, not a
-  requirement. A non-AI marketplace or fintech tool can fit just as well as an AI product.
-
-bangladesh = could this small team build a version for the Bangladeshi market?
-- 8-10: a common, painful problem in Bangladesh; buyers will pay in taka via bKash, Nagad or cash on delivery;
-  no licence needed; software-first; a first version in 2 months. Typical examples: software or AI tools for
-  Facebook-commerce sellers, small shops, clinics, schools, students, freelancers or exporters, sold for a few
-  hundred to a few thousand taka a month.
-- 5-7: real demand but a clear hurdle (strong local incumbents likely, a partner needed, logistics, slow buyers).
-- 1-4: needs a Bangladesh Bank / BSEC / BTRC / DGDA licence, big capital, hardware, physical operations, credit
-  cards, credit bureaus, reliable addresses or APIs Bangladesh lacks; or Bangladeshis don't have the problem.
-- Think about low-end Android, Bangla language and Facebook-commerce habits.
-
-global = could this small team, based in Bangladesh, build a version and sell it to customers abroad?
-- 8-10 (score the version a Bangladesh team would sell): online, self-serve, sold to small businesses, creators,
-  developers or consumers; paid through a merchant
-  of record (Paddle, Lemon Squeezy) because Stripe and PayPal don't operate in Bangladesh; light compliance; a
-  clear niche the funded startup ignores (smaller customers, another region, one industry).
-- 5-7: sellable online but crowded, or needs some sales effort or trust-building.
-- 1-4: enterprise sales (banks, hospitals, governments, law firms, large companies), security reviews,
-  regulated data (medical, financial), on-site work, or infrastructure that needs big capital.
-
-Hard rules: if the material does not say what the company sells or does, every score is at most 3 and confidence
-is "low" (you cannot judge an unknown product). bangladesh and global may each be at most feasibility + 2. If money_to_start is high, neither may
-be above 6. An idea is not good just because the funded company is impressive.
-
-AI is ONE angle on every idea, not a filter: never score an idea higher just because it uses AI. Marketplaces,
-logistics, fintech, commerce, education, health, agriculture, travel and consumer businesses can score just as high.
-
-ai_angle: one line: could AI make this cheaper or better, and could an open model do the job?
-ai_angle_strong: true only if AI is central to a cheaper/better version a small team could build.
-ai_native: true if the funded product itself IS an AI product (AI agent, AI model, AI-first software); false for
-businesses that merely use AI somewhere.
-sector: the ONE broad sector from the allowed list that best describes the customer and market (not the technology):
-an AI tool for clinics is "health", an AI tool for shops is "commerce and retail".
-
-skip = true if the startup is in any of these categories: {skip_list}. Then give skip_reason (the category).
-Still fill every other field (scores may be rough).
-
-category: 1-3 words (e.g. "fintech", "health software", "logistics", "dev tools").
-search_phrase: 3-6 plain words describing the product type for a web search
-(e.g. "clinic appointment booking app"). No company name."""
+CLASSIFY = 'Classify each startup using only the material. Do not judge whether it is a good idea.\n\n- product_known: false if the material does not say what the company sells or does.\n- one_line: what the company sells or does, max 15 words, plain words; "" if unknown.\n- sector: the ONE sector that best describes the customer and market, not the technology. An AI tool for\n  clinics is "health"; a lending app for farmers is "fintech".\n- business_model:\n  software_subscription = software sold by subscription; marketplace = connects two sides (buyers and sellers,\n  workers and clients); financial_product = lending, payments, insurance, investing, banking; commerce = sells\n  physical goods (online shops, B2B distribution, groceries); tech_enabled_service = a service delivered by\n  people with software (logistics operators, clinics, tutoring, agencies); hardware_light = devices built from\n  existing parts (sensors, terminals); deep_tech = new chips, robots, biotech, energy or space technology;\n  infrastructure_api = APIs, developer tools, data or cloud infrastructure; media_content = media, content,\n  communities, games.\n- customer: who pays (consumers, small_businesses, large_businesses, government, developers, mixed).\n- ai_native: true only if the product itself IS AI (an AI agent, model or AI-first software). False if it\n  merely uses AI somewhere.\n- skip: true if the startup belongs to any of these categories: {skip_list}. skip_reason = the category.\n- search_phrase: 3-6 plain words for a web search for this kind of product (no company name).'
+RUBRIC = 'Assess each startup as a source of business ideas for two markets. You are not rating the funded company. You\nare rating the best realistic adaptation of its business model.\n\nStep 1: write the concepts.\n- concept_bd: one sentence: the best Bangladesh version. Who pays, for what, and how they pay.\n- concept_global: one sentence: the best version a company based in Bangladesh could sell to customers abroad.\n  It can be a product or a service delivered remotely (operations, data, design, engineering, support).\n- If a market has no sensible version, write "none".\n\nStep 2: score every dimension from 1 to 10, each with a one-line reason. Base reasons on the material and on\nwell-known structural facts about the market (payment habits, regulation, infrastructure). Use the whole scale;\nin a typical batch most dimensions fall between 3 and 7.\n\nBangladesh:\n- demand: how many people or businesses in Bangladesh have this problem, and how badly. 9-10: a large group\n  with an acute, frequent problem who already pay for poor substitutes. 5-6: real but narrow or occasional.\n  1-3: rare in Bangladesh.\n- readiness: can customers adopt and pay today? Consider bKash, Nagad, bank transfer and cash on delivery;\n  smartphone and internet reach of this customer group; addresses, logistics and data. 9-10: fits today\'s\n  habits. 1-3: needs infrastructure or habits that do not exist yet.\n- competition_gap: room for a new entrant. Name competitors only if they appear in the material. 9-10: nobody\n  credible serves it. 5: some players with clear gaps. 1-3: strong incumbents with lock-in. With no search\n  results, score 5 and write "not checked yet".\n- regulatory_path: 10: nothing beyond a trade licence. 7: simple registrations. 5: workable through a licensed\n  partner (bank, mobile financial service, NBFI, hospital, insurer). 3: needs its own licence from Bangladesh\n  Bank, BTRC, BSEC, DGDA, IDRA or similar, with long timelines. 1: effectively not allowed.\n- economics: can it make money at Bangladeshi price levels? Compare what customers would pay with the cost to\n  acquire and serve them. 9-10: clear margins at local prices. 1-3: only works at rich-country prices.\n\nGlobal, sold from Bangladesh:\n- demand_abroad: evidence that customers abroad pay for this. The funding round is some evidence; stated\n  traction is stronger evidence.\n- remote_delivery: can it be sold and delivered from Bangladesh without staff in the customer\'s country?\n  Software, online sales and remote services score high; on-site work scores low.\n- cost_advantage: does a Bangladesh base give a real edge? Examples: labour-intensive delivery, engineering\n  cost, language fluency, garment and manufacturing networks. 1-3: no edge.\n- trust_burden: how easy it is to win and keep foreign customers. 10: self-serve purchase, light compliance.\n  5: needs sales calls, references or certifications. 1: regulated data, security audits, long procurement.\n- competition_gap: room abroad for a focused new entrant (a niche, region or customer size the funded company\n  ignores).\n\nBoth markets:\n- timing: what changed recently (technology, regulation, behaviour, cost) that makes this work now.\n- traction: numbers stated in the material, else "unknown". investor_signal: named lead investors or\n  accelerator, else "unknown".\n- what_it_takes: build_type, capital (bootstrap under $50k, seed $50k-$1M, venture over $1M), team size to\n  reach first paying customers, licence ("none" or which), time to first revenue. These describe the effort;\n  they are not scores.\n- ai_angle: one line only if AI clearly changes the cost or quality of the business; otherwise "".\n- confidence: high = clear product and market facts; medium = clear product, little else; low = thin material.\n\nRules:\n- Rate the adaptation, not the company\'s prestige. A famous investor or a big round is evidence of demand,\n  nothing more.\n- No preference for any sector, technology or company size. AI is neither a plus nor a minus.\n- Effort is not a penalty. An idea that needs a warehouse, a fleet, a licensed partner or $2M can still score 9\n  on demand and economics. Describe the effort in what_it_takes.\n- If the material does not say what the company sells, every dimension is at most 3 and confidence is low.\n\nReturn one entry per startup_id.'
+CARD = 'Write an opportunity card. Market focus: {market}. Use only the material below for facts.\n\nSTARTUP FACTS / CLASSIFICATION / SCORES (already decided) / NEWS / COMPANY HOMEPAGE / WEB SEARCH RESULTS\n(competitor names may ONLY come from the search results)\n\nFields:\n- one_liner: the opportunity for this market in at most 15 words (the Bangladesh version for a Bangladesh card,\n  the version sold abroad for a global card).\n- what_they_do: 1-2 sentences from the homepage and news only.\n- evidence: 1-2 sentences: traction, investors and why it was funded, from the material only. "unknown" if\n  nothing is stated.\n- bangladesh_play: 2-4 sentences: target customer, the offer, a price in taka marked "to test", how customers\n  pay, how to reach the first 100 customers, and the licence route if one is needed.\n- global_play: 2 or 3 sentences: which customers abroad, the niche the funded company ignores, how to sell and\n  deliver from Bangladesh, and how to get paid (a merchant of record such as Paddle or Lemon Squeezy for\n  software, since Stripe and PayPal do not operate in Bangladesh; invoicing for services). Say plainly if the\n  global version is weak.\n- main_risk: the single biggest reason this could fail in this market, one sentence.\n- already_here: who already does this in Bangladesh, only from the search results. If none: "No one found in a\n  quick search."\n- competitors: only companies the search results show are active in Bangladesh, each with the exact result URL.\n  [] if none.\n- ai_angle: one line only if AI clearly changes the economics; otherwise "".\n- update: after reading the homepage and search results, give competition_gap and regulatory_path for this\n  market again (1-10, same scale as before) and a one-line note on what changed, or "" if nothing changed.\n- source_urls: URLs from the material that support the facts you used.\nNever add facts that are not in the material.'
+DEEP = 'Write a deep dive on this opportunity. THE CARD / SCORES WITH REASONS / SEARCH: competitors in Bangladesh /\nSEARCH: similar companies that shut down / SEARCH: the same model abroad.\n\nFields:\n- landscape: 2-4 sentences on who does this in Bangladesh and abroad, only from the material and search results.\n- competitors: [{name, url}] only companies the search results show; [] if none.\n- failure_check: 1-3 sentences on who tried and failed and why, from the search results; say so if nothing.\n- economics: 2-4 sentences: price points in taka (and US dollars for a global version) marked "to test", the\n  main costs, and a rough path to break-even. Every number here is an estimate; say so.\n- regulatory_route: the licence or registration needed and the realistic route (own licence or a licensed\n  partner), or "none needed".\n- first_customers: how to reach the first 100 paying customers (channels, partners, communities).\n- validation_30_days: a numbered plan, week 1 to week 4, each with one measurable target, ending with the\n  number that counts as a yes.\n- risks: 3 short risks.\n- source_urls: URLs from the search results you used.'
 
 
-def score_prompt(startups: list[dict], skills: list[str], skip_list: list[str]) -> str:
-    out = [RUBRIC.format(skills=", ".join(skills), skip_list="; ".join(skip_list)), "",
-           "Return one entry per startup_id. Use only the material below.", ""]
-    for s in startups:
-        out.append(f"STARTUP {s['id']}: {s['name']}")
-        for k in ("country", "stage", "amount", "investors", "what_they_do", "yc_batch"):
-            if s.get(k):
-                out.append(f"  {k}: {s[k]}")
-        for src in s["sources"]:
-            out.append(f"  source: {src}")
-        out.append("")
-    return "\n".join(out)
+def classify_prompt(startups, skip_list):
+    return (
+        CLASSIFY.replace("{skip_list}", "; ".join(skip_list))
+        + "\nAllowed sectors: "
+        + ", ".join(SECTORS)
+        + "\n"
+        + json.dumps(startups, default=str)
+    )
 
 
-# ---------------------------------------------------------------- cards (Hydrogen)
-
-CARD_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "what_they_do": {"type": "string"},
-        "why_funded": {"type": "string"},
-        "bangladesh_version": {"type": "string"},
-        "global_angle": {"type": "string"},
-        "ai_angle": {"type": "string"},
-        "already_in_bangladesh": {"type": "string"},
-        "competitors": {"type": "array", "items": {
-            "type": "object", "properties": {"name": {"type": "string"}, "url": {"type": "string"}},
-            "required": ["name", "url"]}},
-        "test_this_week": {"type": "string"},
-        "score_check": {"type": "object", "properties": {
-            "bangladesh": {"type": "integer"}, "global": {"type": "integer"}, "note": {"type": "string"}},
-            "required": ["bangladesh", "global", "note"]},
-        "source_urls": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["what_they_do", "why_funded", "bangladesh_version", "global_angle", "ai_angle",
-                 "already_in_bangladesh", "competitors", "test_this_week", "score_check", "source_urls"],
-}
+def score_prompt(startups):
+    return (
+        RUBRIC
+        + "\nEvidence rules: Last-30-day revenue is not MRR or ARR unless the source explicitly says so. A funding round, a universal need or a few paying users alone does not justify demand_abroad 8-10; those need substantial evidence of paying demand. Product-only material means medium confidence, thin material low. Never claim an estimate or regulatory route was verified unless the material verifies it.\nMATERIAL:\n"
+        + json.dumps(startups, default=str)
+    )
 
 
-def card_prompt(p: dict) -> str:
-    return f"""Write a startup idea card for the owner. Market focus: {p['market']}.
-
-STARTUP FACTS (from news extraction; use as given):
-{p['facts']}
-
-SCORES (already decided, do not change): {p['scores']}
-
-NEWS SOURCES (title + text):
-{p['news']}
-
-COMPANY HOMEPAGE TEXT ({p['homepage_url'] or 'not available'}):
-{p['homepage'] or 'unknown'}
-
-WEB SEARCH RESULTS (for "already in Bangladesh"; competitor names may ONLY come from here):
-{p['search']}
-
-Write each field in plain English, short:
-- what_they_do: 1-2 sentences, from the homepage/news only.
-- why_funded: 1-2 sentences: what the sources say about traction, team or market. If they say nothing, "unknown".
-- bangladesh_version: 2-4 sentences: how a 2-3 person team could build a version for Bangladesh (payments via
-  bKash/Nagad/cash on delivery, Bangla, low-end Android, licences needed, who pays in taka).
-- global_angle: 2-3 sentences: how a Bangladesh-based team could sell a version abroad: which customers, which
-  niche the funded startup ignores, how they'd find buyers online, and payment via Paddle or Lemon Squeezy as
-  merchant of record. Be honest if the global version is weak.
-- ai_angle: 1-2 sentences: how AI (ideally an open model) makes it cheaper or better.
-- already_in_bangladesh: 1-2 sentences summarising who already does this in Bangladesh, based ONLY on the web
-  search results. If the results show nobody, say "No one found in a quick search."
-- competitors: only companies the search results show are active in Bangladesh, each with the exact result URL.
-  Global tools that merely appear in the results are not Bangladeshi competitors. [] if none.
-- test_this_week: 2-4 concrete steps to test demand in Bangladesh within 7 days (who to talk to, what to post,
-  what number counts as a yes).
-- score_check: after reading the homepage and search results, would you change the scores? Give the Bangladesh
-  and global scores you now think are right (same rules: strict, small team, licences, local competitors) and a
-  one-line note on what changed. If nothing changed, repeat the scores and set note to "".
-- source_urls: the URLs (from the material above) that support the facts you used.
-Never add facts that are not in the material."""
+def card_prompt(p):
+    return (
+        CARD.replace("{market}", p["market"])
+        + "\nProposed pricing, channels, niches and regulatory routes are estimates to validate. Do not assert that the funded company ignores a niche unless a source says so; describe it as a proposed niche. Keep local retail registration separate from any export permits needed by the global concept. Last-30-day revenue is not MRR. Search results showing several direct substitutes or free options must be reflected in the competition assessment; name the new evidence in the update note rather than claiming the market was verified.\nMATERIAL:\n"
+        + json.dumps(p, default=str)
+    )
 
 
-# ---------------------------------------------------------------- deep dive (Hydrogen)
-
-DEEP_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "competitors_bd": {"type": "string"},
-        "competitors": {"type": "array", "items": {
-            "type": "object", "properties": {"name": {"type": "string"}, "url": {"type": "string"}},
-            "required": ["name", "url"]}},
-        "failure_check": {"type": "string"},
-        "how_it_makes_money": {"type": "string"},
-        "risks": {"type": "string"},
-        "first_7_days": {"type": "string"},
-        "source_urls": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["competitors_bd", "competitors", "failure_check", "how_it_makes_money", "risks",
-                 "first_7_days", "source_urls"],
-}
+def deep_dive_prompt(p):
+    return (
+        DEEP
+        + "\nThe card plays, effort labels and prices are hypotheses, not independent evidence. Describe regulatory routes as expected routes to validate unless official search material confirms them. Competitor and failure names must appear in the supplied searches. Last-30-day revenue is not MRR.\nMATERIAL:\n"
+        + json.dumps(p, default=str)
+    )
 
 
-def deep_dive_prompt(p: dict) -> str:
-    return f"""Write a deep dive on this startup idea for a 2-3 person team in Bangladesh.
-
-THE CARD THE OWNER ALREADY READ:
-{p['card']}
-
-WEB SEARCH: competitors in Bangladesh (names may ONLY come from here):
-{p['search_bd']}
-
-WEB SEARCH: similar startups that shut down or failed:
-{p['search_fail']}
-
-Fields (plain English, short, digits for numbers):
-- competitors_bd: 2-4 sentences on who already does this in Bangladesh and how, ONLY from the search results.
-- competitors: [{{name, url}}] only companies the search results show are active in Bangladesh; [] if none.
-- failure_check: 1-3 sentences: what the shut-down search shows (who failed and why). If nothing relevant, say so.
-- how_it_makes_money: 2-4 sentences with example prices in taka (৳) for Bangladesh, and in US dollars if
-  there is a global version. Mark prices as "to test", not facts.
-- risks: 3 short risks.
-- first_7_days: a numbered 7-day plan, one line per day.
-- source_urls: URLs from the search results you relied on."""
-
-
-# ---------------------------------------------------------------- validation kit (Hydrogen; Qwen if notes)
-
-KIT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "interview": {"type": "array", "items": {
-            "type": "object", "properties": {"bangla": {"type": "string"}, "english": {"type": "string"}},
-            "required": ["bangla", "english"]}},
-        "headline": {"type": "string"},
-        "subhead": {"type": "string"},
-        "call_to_action": {"type": "string"},
-        "prices": {"type": "string"},
-        "plan_7_days": {"type": "string"},
-    },
-    "required": ["interview", "headline", "subhead", "call_to_action", "prices", "plan_7_days"],
-}
-
-
-def kit_prompt(card: str, notes: str, market: str, shorter: bool, all_bangla: bool) -> str:
+def kit_prompt(
+    card: str, notes: str, market: str, shorter: bool, all_bangla: bool
+) -> str:
     style = []
     if shorter:
-        style.append("Make everything much shorter: 3 interview questions, a 4-word headline, a 3-day plan.")
+        style.append(
+            "Make everything much shorter: 3 interview questions, a 4-word headline, a 3-day plan."
+        )
     if all_bangla:
-        style.append("Write EVERY field in Bangla (Bengali script), including the plan; english glosses may stay.")
-    return f"""Build a validation kit so a 2-3 person team can test this idea with real customers this week.
+        style.append(
+            "Write EVERY field in Bangla (Bengali script), including the plan; english glosses may stay."
+        )
+    return f"""Build a validation kit to test this idea with real customers this week.
 
 THE IDEA (card):
 {card}
 
 THE OWNER'S PRIVATE NOTES (may be empty):
-{notes or '(none)'}
+{notes or "(none)"}
 
-Market: {market}. {' '.join(style)}
+Market: {market}. {" ".join(style)}
 Fields:
 - interview: 5 questions to ask potential customers, in natural spoken Bangla, each with an English gloss.
   Ask about past behaviour and real spending, not opinions about the idea.
-- headline, subhead, call_to_action: landing-page copy{' in Bangla' if market == 'Bangladesh' else ''}.
-- prices: 2-3 price points to test, in taka (৳) for Bangladesh{' and US dollars for the global version' if market != 'Bangladesh' else ''}, marked "to test".
+- headline, subhead, call_to_action: landing-page copy{" in Bangla" if market == "Bangladesh" else ""}.
+- prices: 2 or 3 price points to test, in taka (৳) for Bangladesh{" and US dollars for the global version" if market != "Bangladesh" else ""}, marked "to test".
 - plan_7_days: a numbered 7-day plan, one line per day, with a number that counts as a yes.
 Use only the idea and notes above; no invented market facts."""
 
 
 # ---------------------------------------------------------------- ask (Hydrogen; Qwen if private notes)
-
-ASK_SCHEMA = {
-    "type": "object",
-    "properties": {"on_topic": {"type": "boolean"}, "answer": {"type": "string"}},
-    "required": ["on_topic", "answer"],
-}
 
 
 def ask_prompt(question: str, context: str) -> str:
@@ -356,21 +141,12 @@ testing the idea. If a fact is not in the context, say it is unknown."""
 
 # ---------------------------------------------------------------- assumptions from private notes (Qwen only)
 
-ASSUMPTIONS_SCHEMA = {
-    "type": "object",
-    "properties": {"assumptions": {"type": "array", "items": {
-        "type": "object",
-        "properties": {"text": {"type": "string"},
-                       "status": {"type": "string", "enum": ["holding", "at_risk", "untested"]},
-                       "evidence_for": {"type": "integer"}, "evidence_against": {"type": "integer"}},
-        "required": ["text", "status", "evidence_for", "evidence_against"]}},
-        "summary": {"type": "string"}},
-    "required": ["assumptions", "summary"],
-}
-
 
 def assumptions_prompt(card: str, notes: list[str], current: list[dict]) -> str:
-    cur = "\n".join(f"- {a['text']} [{a['status']}, +{a['evidence_for']}/-{a['evidence_against']}]" for a in current)
+    cur = "\n".join(
+        f"- {a['text']} [{a['status']}, +{a['evidence_for']}/-{a['evidence_against']}]"
+        for a in current
+    )
     nts = "\n".join(f"- {n}" for n in notes)
     return f"""Track the key assumptions behind this startup idea using the owner's private notes from customer tests.
 
@@ -387,37 +163,3 @@ Return the full updated list (keep wording stable; add new ones only if the note
 status = holding (evidence supports it), at_risk (evidence against it), untested (no evidence yet);
 evidence_for / evidence_against = how many notes support / contradict it.
 summary: 1-2 sentences on what changed with the latest note."""
-
-
-# ---------------------------------------------------------------- card fact gate (Flash-Lite)
-
-FIX_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "unsupported_claims": {"type": "array", "items": {"type": "string"}},
-        "what_they_do": {"type": "string"},
-        "why_funded": {"type": "string"},
-        "already_in_bangladesh": {"type": "string"},
-        "score_check_note": {"type": "string"},
-    },
-    "required": ["unsupported_claims", "what_they_do", "why_funded", "already_in_bangladesh", "score_check_note"],
-}
-
-
-def fix_prompt(fields: dict, material: str) -> str:
-    import json as _json
-
-    return f"""You are the fact gate for a startup card. Below are the card's FACTUAL fields and ALL the material the
-writer had. A fact is supported only if the material states it (funding, investors, accelerators like Y Combinator,
-traction, team, what the company does, which companies operate in Bangladesh, market facts like regulations or
-payment habits). Do not use your own knowledge.
-
-1. unsupported_claims: list every claim in these fields that the material does not support ([] if none).
-2. Return each field rewritten with ONLY the unsupported parts removed or replaced by "unknown"; keep everything
-   else word for word. If nothing is unsupported, return the fields unchanged.
-
-FIELDS:
-{_json.dumps(fields, ensure_ascii=False, indent=1)}
-
-MATERIAL:
-{material}"""

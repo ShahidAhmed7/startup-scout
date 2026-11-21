@@ -1,305 +1,197 @@
-import json
+"""Real Pydantic AI adapters with deterministic FunctionModel responses; no service calls."""
 
-import httpx
+import asyncio
+from contextlib import contextmanager
+from copy import deepcopy
 import pytest
-
-from scout.llm import gemini
-
-
-@pytest.fixture(autouse=True)
-def no_waiting(monkeypatch):
-    monkeypatch.setattr(gemini, "_throttle", lambda *a: None)
-    monkeypatch.setattr(gemini, "_backoff", lambda: None)
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.profiles import ModelProfile
+from scout.llm import registry, guard, run as ai
+from scout.llm.schemas import Ask
+from scout.config import config
 
 
-def ok_response(payload: dict | str):
-    text = payload if isinstance(payload, str) else json.dumps(payload)
-    return httpx.Response(200, json={
-        "candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}],
-        "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5},
-    })
+class Conn:
+    def execute(self, *a, **kw):
+        return self
+
+    def fetchone(self):
+        return {"n": 0, "id": 1}
+
+    def transaction(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
 
 
-def mock(responses_by_key: dict):
-    """responses_by_key: {'main-key': [resp, ...], 'backup-key': [...]}; records which keys were used."""
+@pytest.fixture
+def harness(monkeypatch):
+    cfg = deepcopy(config())
+    for m in cfg["models"].values():
+        m["rpm"] = 0
+    for module in (registry, guard, ai):
+        monkeypatch.setattr(module, "config", lambda: cfg)
+
+    @contextmanager
+    def connection(conn):
+        yield Conn()
+
+    monkeypatch.setattr(guard, "usage_connection", connection)
+    monkeypatch.setattr(guard, "reserve_attempt", lambda *a: 1)
+    guard._slots.clear()
+    guard._next.clear()
+    guard._busy.clear()
     calls = []
+    fail = set()
+    invalid = set()
 
-    def handler(request: httpx.Request):
-        key = request.headers["x-goog-api-key"]
-        calls.append(key)
-        return responses_by_key[key].pop(0)
+    def get(entry):
+        async def function(messages, info):
+            calls.append(entry)
+            await asyncio.sleep(0.01)
+            if entry in fail:
+                raise RuntimeError("provider unavailable")
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        "invalid"
+                        if entry in invalid
+                        else '{"on_topic":true,"answer":"supported"}'
+                    )
+                ]
+            )
 
-    return httpx.Client(transport=httpx.MockTransport(handler)), calls
+        return FunctionModel(
+            function, profile=ModelProfile(supports_json_schema_output=True)
+        )
 
-
-SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
-
-
-def test_main_key_used_first():
-    http, calls = mock({"main-key": [ok_response({"ok": True})]})
-    r = gemini.generate("flash_lite", "x", kind="test", schema=SCHEMA, http=http)
-    assert r.key_label == "main" and r.data == {"ok": True}
-    assert calls == ["main-key"]
-
-
-@pytest.mark.parametrize("status", [429, 401, 403])
-def test_backup_key_used_at_once_on_quota_or_auth_errors(status):
-    http, calls = mock({
-        "main-key": [httpx.Response(status, json={"error": {"message": "nope"}})],
-        "backup-key": [ok_response({"ok": True})],
-    })
-    r = gemini.generate("flash_lite", "x", kind="test", schema=SCHEMA, http=http)
-    assert r.key_label == "backup"
-    assert calls == ["main-key", "backup-key"]
+    monkeypatch.setattr(registry, "get_model", get)
+    return cfg, calls, fail, invalid
 
 
-@pytest.mark.parametrize("status", [500, 503])
-def test_server_errors_retry_main_once_then_backup(status):
-    http, calls = mock({
-        "main-key": [httpx.Response(status, json={}), httpx.Response(status, json={})],
-        "backup-key": [ok_response({"ok": True})],
-    })
-    r = gemini.generate("flash_lite", "x", kind="test", schema=SCHEMA, http=http)
-    assert r.key_label == "backup"
-    assert calls == ["main-key", "main-key", "backup-key"]
-
-
-def test_overload_that_clears_on_retry_stays_on_main():
-    http, calls = mock({"main-key": [httpx.Response(503, json={}), ok_response({"ok": True})]})
-    r = gemini.generate("flash_lite", "x", kind="test", schema=SCHEMA, http=http)
-    assert r.key_label == "main" and calls == ["main-key", "main-key"]
-
-
-def test_both_keys_fail_raises_unavailable():
-    http, _ = mock({
-        "main-key": [httpx.Response(429, json={})],
-        "backup-key": [httpx.Response(503, json={}), httpx.Response(503, json={})],
-    })
-    with pytest.raises(gemini.GeminiUnavailable) as e:
-        gemini.generate("hydrogen", "x", kind="test", http=http)
-    assert [label for label, _ in e.value.errors] == ["main", "backup"]
-    assert [err.kind for _, err in e.value.errors] == ["quota", "server"]
-
-
-def test_bad_request_does_not_switch_keys():
-    http, calls = mock({"main-key": [httpx.Response(400, json={"error": {"message": "bad schema"}})]})
-    with pytest.raises(gemini.GeminiError) as e:
-        gemini.generate("flash_lite", "x", kind="test", http=http)
-    assert e.value.kind == "bad_request" and calls == ["main-key"]
-
-
-def test_invalid_json_is_retried_once_on_same_key():
-    http, calls = mock({"main-key": [ok_response("not json"), ok_response({"ok": True})]})
-    r = gemini.generate("flash_lite", "x", kind="test", schema=SCHEMA, http=http)
-    assert r.data == {"ok": True} and calls == ["main-key", "main-key"]
-
-
-def test_failed_validation_twice_moves_to_backup():
-    def must_be_true(d):
-        if d.get("ok") is not True:
-            raise ValueError("ok must be true")
-
-    http, calls = mock({
-        "main-key": [ok_response({"ok": False}), ok_response({"ok": False})],
-        "backup-key": [ok_response({"ok": True})],
-    })
-    r = gemini.generate("flash_lite", "x", kind="test", schema=SCHEMA, validate=must_be_true, http=http)
-    assert r.key_label == "backup" and calls == ["main-key", "main-key", "backup-key"]
-
-
-def test_thought_parts_are_ignored():
-    resp = httpx.Response(200, json={"candidates": [{"content": {"parts": [
-        {"text": "thinking...", "thought": True}, {"text": "answer"}]}, "finishReason": "STOP"}]})
-    http, _ = mock({"main-key": [resp]})
-    assert gemini.generate("hydrogen", "x", kind="test", http=http).text == "answer"
-
-
-def test_missing_main_key_goes_straight_to_backup(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY_MAIN")
-    http, calls = mock({"backup-key": [ok_response("hi")]})
-    assert gemini.generate("hydrogen", "x", kind="test", http=http).key_label == "backup"
-    assert calls == ["backup-key"]
-
-
-@pytest.mark.parametrize("status,body,kind", [
-    (429, "", "quota"),
-    (400, '{"error":{"status":"RESOURCE_EXHAUSTED"}}', "quota"),
-    (400, "API key not valid. Please pass a valid API key.", "auth"),
-    (403, "", "auth"),
-    (500, "", "server"),
-    (404, "model not found", "bad_request"),
-])
-def test_classify(status, body, kind):
-    assert gemini.classify(status, body) == kind
-
-
-def test_calls_use_owner_defaults_high_thinking_and_big_output():
-    sent = {}
-
-    def handler(request: httpx.Request):
-        sent.update(json.loads(request.content))
-        return ok_response({"ok": True})
-
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    gemini.generate("hydrogen", "x", kind="test", schema=SCHEMA, http=http)
-    gen = sent["generationConfig"]
-    assert gen["thinkingConfig"] == {"thinkingLevel": "high"}
-    assert gen["maxOutputTokens"] == 65536
-    assert "temperature" not in gen  # model default, as Google advises for Gemini 3
-    assert gen["responseMimeType"] == "application/json" and gen["responseJsonSchema"] == SCHEMA
-
-
-def test_chain_card_falls_back_to_flash_lite_then_gemma():
-    """Owner's order: Hydrogen (both keys) -> Flash-Lite (both keys) -> Gemma -> (Qwen, phase 3)."""
-    seen = []
-
-    def handler(request: httpx.Request):
-        model = request.url.path.split("/models/")[1].split(":")[0]
-        seen.append((model, request.headers["x-goog-api-key"]))
-        if model == "gemma-4-31b-it":
-            return ok_response({"ok": True})
-        return httpx.Response(429, json={})
-
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    r = gemini.generate_chain("hydrogen", "x", kind="card", schema=SCHEMA, http=http)
-    assert r.model_id == "gemma-4-31b-it" and r.key_label == "main"
-    assert seen == [
-        ("gemini-4-hydrogen", "main-key"), ("gemini-4-hydrogen", "backup-key"),
-        ("gemini-3.5-flash-lite", "main-key"), ("gemini-3.5-flash-lite", "backup-key"),
-        ("gemma-4-31b-it", "main-key"),
+def test_chain_order_and_validation_failure_fallback(harness):
+    cfg, calls, fail, invalid = harness
+    fail.update(["strong_main", "strong_backup"])
+    invalid.add("fast_main")
+    assert ai.run("card", "public", Ask).entry == "fast_backup"
+    assert calls == ["strong_main"] * 2 + ["strong_backup"] * 2 + ["fast_main"] * 2 + [
+        "fast_backup"
     ]
 
 
-def test_chain_stops_at_first_success():
-    http, calls = mock({"main-key": [ok_response({"ok": True})]})
-    r = gemini.generate_chain("hydrogen", "x", kind="card", schema=SCHEMA, http=http)
-    assert r.model_id == "gemini-4-hydrogen" and calls == ["main-key"]
+def test_parallel_spreads_keys(harness):
+    cfg, calls, fail, invalid = harness
+    out = ai.run_many("card", ["x"] * 4, Ask)
+    assert len(out) == 4 and all(isinstance(r, ai.Result) for r in out)
+    assert calls.count("strong_main") == 2 and calls.count("strong_backup") == 2
 
 
-def test_chain_all_fail_lists_every_error_for_qwen_router():
-    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(429, json={})))
-    with pytest.raises(gemini.GeminiUnavailable) as e:
-        gemini.generate_chain("hydrogen", "x", kind="card", http=http)
-    assert [label for label, _ in e.value.errors] == [
-        "hydrogen/main", "hydrogen/backup", "flash_lite/main", "flash_lite/backup", "gemma/main", "gemma/backup"]
+def test_private_never_leaves_private_chain(harness):
+    cfg, calls, fail, invalid = harness
+    assert ai.run("note", "private note", Ask, private=True).entry == "private"
+    fail.add("private")
+    with pytest.raises(ai.LLMUnavailable):
+        ai.run("kit", "private note", Ask, private=True)
+    assert all(e == "private" for e in calls)
 
 
-def test_gemma_output_limit_is_respected():
-    sent = {}
-
-    def handler(request):
-        sent.update(json.loads(request.content))
-        return ok_response("hi")
-
-    gemini.generate("gemma", "x", kind="test", http=httpx.Client(transport=httpx.MockTransport(handler)))
-    assert sent["generationConfig"]["maxOutputTokens"] == 32768
+def test_forced_google_failure(harness, monkeypatch):
+    monkeypatch.setenv("FORCE_GEMINI_FAIL", "1")
+    assert ai.run("card", "x", Ask).entry == "private"
+    assert harness[1] == ["private"]
 
 
-class FakeUsage:
-    """Stands in for the database: counts Hydrogen calls already made today per key."""
-
-    def __init__(self, monkeypatch, used: dict):
-        from scout.db import repo
-        self.logged = []
-        monkeypatch.setattr(repo, "gemini_calls_today", lambda conn, model_id, label: used.get((model_id, label), 0))
-        monkeypatch.setattr(repo, "record_usage", lambda conn, **kw: self.logged.append(kw))
+def test_dev_uses_config_without_strong_fallback(harness, monkeypatch):
+    monkeypatch.setenv("SCOUT_DEV", "1")
+    assert ai.run("score", "x", Ask).entry == "fast_main"
+    assert harness[1] == ["fast_main"]
 
 
-def test_run_job_uses_hydrogen_for_scoring_and_flash_lite_for_extraction():
+def test_extra_validation_retries_then_falls_back(harness):
+    def reject(out):
+        if harness[1][-1] == "strong_main":
+            raise ValueError("wrong IDs")
+
+    assert ai.run("score", "x", Ask, validate=reject).entry == "strong_backup"
+    assert harness[1] == ["strong_main", "strong_main", "strong_backup"]
+
+
+def test_provider_string_can_change_without_router_change(harness):
+    harness[0]["models"]["strong_main"]["model"] = "openai-chat:any-compatible-model"
+    r = ai.run("score", "x", Ask)
+    assert (
+        r.model == "openai-chat:any-compatible-model" and r.output.answer == "supported"
+    )
+
+
+def test_cap_and_reserve(monkeypatch):
+    class Usage(Conn):
+        used = 14
+
+        def fetchone(self):
+            return {"n": self.used, "id": 99}
+
+    c = Usage()
+    with pytest.raises(guard.CapReached):
+        guard.reserve_attempt(c, "strong_main", "score")
+    assert guard.reserve_attempt(c, "strong_main", "ask") == 99
+    c.used = 18
+    with pytest.raises(guard.CapReached):
+        guard.reserve_attempt(c, "strong_main", "ask")
+
+
+def test_native_settings():
+    assert registry.settings("strong_main")["google_thinking_config"] == {
+        "thinking_level": "HIGH"
+    }
+    assert registry.settings("strong_main")["max_tokens"] == 65536
+
+
+def test_registry_constructs_an_openai_compatible_model_without_environment_key(
+    monkeypatch,
+):
+    cfg = deepcopy(config())
+    cfg["models"]["test_other"] = {
+        "model": "openai-chat:example/model",
+        "key_env": "OTHER_TEST_KEY",
+        "base_url_env": "OTHER_TEST_URL",
+    }
+    monkeypatch.setenv("OTHER_TEST_KEY", "non-secret-test-key")
+    monkeypatch.setenv("OTHER_TEST_URL", "https://example.invalid/v1")
+    monkeypatch.setattr(registry, "config", lambda: cfg)
+    registry.get_model.cache_clear()
+    model = registry.get_model("test_other")
+    assert model.model_name == "example/model"
+    assert str(model.client.base_url) == "https://example.invalid/v1/"
+    registry.get_model.cache_clear()
+
+
+def test_budget_guard_prevents_private_request(monkeypatch):
+    from scout import budget
+
+    monkeypatch.setattr(budget, "month_spend", lambda conn: 25)
+    with pytest.raises(guard.CapReached):
+        guard.reserve_attempt(Conn(), "private", "note")
+
+
+def test_caps_count_old_labels_and_reject_concurrent_reservations(monkeypatch):
     seen = []
 
-    def handler(request):
-        seen.append(request.url.path.split("/models/")[1].split(":")[0])
-        return ok_response({"ok": True})
+    class Usage(Conn):
+        def execute(self, sql, args=None):
+            seen.append((sql, args))
+            return self
 
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    assert gemini.run_job("score", "x", schema=SCHEMA, http=http).model_id == "gemini-4-hydrogen"
-    assert gemini.run_job("extract", "x", schema=SCHEMA, http=http).model_id == "gemini-3.5-flash-lite"
-    assert seen == ["gemini-4-hydrogen", "gemini-3.5-flash-lite"]
+        def fetchone(self):
+            return {"n": 18, "id": 1}
 
-
-def test_pipeline_leaves_reserved_hydrogen_calls_for_chat(monkeypatch):
-    # 2 keys x 18 cap = 36; reserve 8 -> pipeline stops using Hydrogen at 28 calls.
-    FakeUsage(monkeypatch, {("gemini-4-hydrogen", "main"): 18, ("gemini-4-hydrogen", "backup"): 10})
-    seen = []
-
-    def handler(request):
-        seen.append(request.url.path.split("/models/")[1].split(":")[0])
-        return ok_response({"ok": True})
-
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    r = gemini.run_job("card", "x", schema=SCHEMA, http=http, conn=object())
-    assert r.model_id == "gemini-3.5-flash-lite"          # pipeline fell back
-    assert "gemini-4-hydrogen" not in seen
-    r = gemini.run_job("deep_dive", "x", schema=SCHEMA, http=http, conn=object())
-    assert r.model_id == "gemini-4-hydrogen" and r.key_label == "backup"   # chat may use the reserve
-
-
-def test_pipeline_uses_hydrogen_below_the_reserve(monkeypatch):
-    FakeUsage(monkeypatch, {("gemini-4-hydrogen", "main"): 18, ("gemini-4-hydrogen", "backup"): 9})
-    http, calls = mock({"backup-key": [ok_response({"ok": True})]})
-    r = gemini.run_job("score", "x", schema=SCHEMA, http=http, conn=object())
-    assert r.model_id == "gemini-4-hydrogen" and r.key_label == "backup"
-
-
-# ---------- both keys in parallel (owner, 2026-11-19) ----------
-
-REAL_THROTTLE = gemini._throttle  # captured at import, before the autouse fixture patches it
-
-
-def test_parallel_jobs_use_both_keys_at_the_same_time():
-    import threading
-    import time
-    lock = threading.Lock()
-    state = {"now": 0, "max": 0}
-    keys = []
-
-    def handler(request):
-        with lock:
-            state["now"] += 1
-            state["max"] = max(state["max"], state["now"])
-            keys.append(request.headers["x-goog-api-key"])
-        time.sleep(0.2)
-        with lock:
-            state["now"] -= 1
-        return ok_response({"ok": True})
-
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    results = gemini.run_parallel([("card", f"card {i}", {"schema": SCHEMA, "http": http}) for i in range(4)])
-    assert all(r.model_id == "gemini-4-hydrogen" for r in results)
-    assert state["max"] == 4                       # 2 keys x 2 Hydrogen requests in flight at once
-    assert keys.count("main-key") == 2 and keys.count("backup-key") == 2
-
-
-def test_parallel_one_failed_task_keeps_the_others():
-    def handler(request):
-        if b"bad" in request.content:
-            return httpx.Response(400, json={"error": {"message": "bad request"}})
-        return ok_response({"ok": True})
-
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    results = gemini.run_parallel([("score", p, {"schema": SCHEMA, "http": http}) for p in ("good", "bad", "good")])
-    assert results[0].data == {"ok": True} and results[2].data == {"ok": True}
-    assert isinstance(results[1], gemini.GeminiError) and results[1].kind == "bad_request"
-
-
-def test_parallel_failover_when_one_key_is_out_of_quota():
-    def handler(request):
-        if request.headers["x-goog-api-key"] == "main-key":
-            return httpx.Response(429, json={})
-        return ok_response({"ok": True})
-
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    results = gemini.run_parallel([("card", f"c{i}", {"schema": SCHEMA, "http": http}) for i in range(3)])
-    assert [r.key_label for r in results] == ["backup", "backup", "backup"]
-
-
-def test_throttle_wait_on_one_key_never_delays_the_other(monkeypatch):
-    slept = []
-    monkeypatch.setattr(gemini.time, "sleep", lambda s: slept.append(s))
-    gemini._next_slot.clear()
-    REAL_THROTTLE("main", "hydrogen")
-    REAL_THROTTLE("main", "hydrogen")     # same key: must wait ~12.5s (5 requests/minute)
-    REAL_THROTTLE("backup", "hydrogen")   # other key: no wait
-    gemini._next_slot.clear()
-    assert len(slept) == 1 and 12 <= slept[0] <= 12.5
+    with pytest.raises(guard.CapReached):
+        guard.reserve_attempt(Usage(), "strong_backup", "ask")
+    query = next(args for sql, args in seen if "count(*)" in sql)
+    assert "backup" in query[1] and "strong_backup" in query[1]
+    assert any("pg_advisory_xact_lock" in sql for sql, args in seen)

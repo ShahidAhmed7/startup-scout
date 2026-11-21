@@ -1,109 +1,239 @@
-# Owner settings. No secrets here (those live in .env and the Modal secret "scout-secrets").
-# Settings changed by chat (time, mix, skip list, skills) are stored in the database
-# `settings` table and override the values below.
-
+# Model routing, scoring and limits. Secrets live in .env and scout-secrets.
 timezone: Asia/Dhaka
-output_language: English        # every message is in English; non-English sources are translated
-digest_time: "08:00"
-digest_mix: {bangladesh: 3, global: 2}
-min_score: 6
-min_feasibility: 5    # a pick must be buildable by 2-3 people in ~2 months
-# Variety (owner, 2026-11-19: "many startups, not only AI"): picks come from different broad sectors, and the
-# digest adds "More to explore" rows from other sectors (cards on tap). max_ai_native is a MAXIMUM, not a quota:
-# 0-3 AI-first startups in the whole digest (picks + explore rows together), depending on what is best that day.
-diversity: {max_ai_native: 3, explore_rows: 5, explore_min_score: 5}
-# Picks rest on solid information (owner, 2026-11-19): a low-confidence startup ranks 1 point lower, so a
-# better-documented startup with a similar score wins. After research, a pick whose score for its market falls
-# below min_score is swapped for the next reserve (at most 3 swaps a day).
-quality: {low_confidence_penalty: 1.0, max_research_swaps: 3}
-
-owner:
-  skills: [AI and machine learning, Python, web apps]
-
+output_language: English
+digest_time: 08:00
+digest_mix:
+  bangladesh: 3
+  global: 2
+min_score: 6.5
+diversity:
+  one_per_sector: true
+  max_ai_native: 3
+  max_same_business_model: 2
+  min_non_us_picks: 1
+  novelty_days: 30
+  novelty_similarity: 0.85
+  explore_rows: 5
+  explore_min_score: 5
+quality:
+  max_research_swaps: 3
 skip_list:
-  - frontier AI model labs
-  - chips and semiconductors
-  - robotics hardware
-  - data centers and GPU clouds
-  - energy infrastructure
-  - space
-  - biotech wet labs
-
-ai_angle: {show: true, boost: 0.2}   # AI is one angle, not a filter (owner, 2026-11-19)
-weights: {pain: 1.0, why_now: 0.8, feasibility: 1.0, fits_you: 0.7}
-
-# Which model does each job first (owner, 2026-11-19: Hydrogen is first priority wherever it fits).
-# If that model fails or its daily allowance is used up, the job moves down the `fallback` chain.
+- frontier AI model labs
+- chips and semiconductors
+- robotics hardware
+- data centers and GPU clouds
+- energy infrastructure
+- space
+- biotech wet labs
 jobs:
-  extract: flash_lite     # bulk: 30-40 calls/day pulling names, amounts, countries out of articles.
-                          # Too many for Hydrogen's 20/day per key, and mechanical work.
-  score: hydrogen         # skip filter + Bangladesh/global scores + sub-scores (batches of 10)
-  card: hydrogen          # the 5 daily cards
-  deep_dive: hydrogen     # "More" button
-  friday: hydrogen        # Friday report deep dive
-  ask: hydrogen           # questions about public cards (private notes always go to Qwen)
-  explore: hydrogen       # a card written on demand when the owner taps a "More to explore" row
-  kit: hydrogen           # validation kit from a public card (with private notes -> Qwen)
-
-# Model settings. IDs are pinned and stored on every card.
-# free_limits are per key (each key is its own Google account), as reported for the free tier on
-# 2026-11-19. OWNER: confirm at aistudio.google.com/rate-limit, signed in with each account.
+  score:
+  - &id001
+    - strong_main
+    - strong_backup
+  - &id002
+    - fast_main
+    - fast_backup
+  - &id003
+    - open_main
+    - open_backup
+  - - private
+  card:
+  - *id001
+  - *id002
+  - *id003
+  - - private
+  deep_dive:
+  - *id001
+  - *id002
+  - *id003
+  - - private
+  friday:
+  - *id001
+  - *id002
+  - *id003
+  - - private
+  explore:
+  - *id001
+  - *id002
+  - *id003
+  - - private
+  ask:
+  - *id001
+  - *id002
+  - *id003
+  - - private
+  kit:
+  - *id001
+  - *id002
+  - *id003
+  - - private
+  extract:
+  - *id002
+  - *id003
+  - - private
+  classify:
+  - *id002
+  - *id003
+  - - private
+  private:
+  - - private
 models:
-  hydrogen:
-    id: gemini-4-hydrogen
-    free_limits: {rpm: 5, tpm: 250000, rpd: 20}
-    cap_per_day: 18               # our own cap per key, below the free limit -> 36/day with both keys
-    concurrency_per_key: 2        # requests in flight at once per key (high thinking takes 20-60s)
-    reserve_for_chat: 8           # of those 36, the 07:00 pipeline leaves 8 for deep dives and ask
-                                  # (Google's quota day resets around 14:00 Dhaka, not at midnight)
-    max_output_tokens: 65536
-  flash_lite:
-    id: gemini-3.5-flash-lite
-    free_limits: {rpm: 15, tpm: 250000, rpd: 500}
+  strong_main:
+    model: google:gemini-4-hydrogen
+    key_env: GEMINI_API_KEY_MAIN
+    rpm: 5
+    cap_per_day: 18
+    concurrency: 2
+    settings:
+      thinking: high
+      max_output_tokens: 65536
+      timeout_s: 300
+    reserve_for_chat: 4
+  strong_backup:
+    model: google:gemini-4-hydrogen
+    key_env: GEMINI_API_KEY_BACKUP
+    rpm: 5
+    cap_per_day: 18
+    concurrency: 2
+    settings:
+      thinking: high
+      max_output_tokens: 65536
+      timeout_s: 300
+    reserve_for_chat: 4
+  fast_main:
+    model: google:gemini-3.5-flash-lite
+    key_env: GEMINI_API_KEY_MAIN
+    rpm: 15
     cap_per_day: 150
-    concurrency_per_key: 3
-    max_output_tokens: 65536
-  gemma:                          # free fallback: Google's open model, served by the Gemini API
-    id: gemma-4-31b-it
-    free_limits: {rpm: 15, tpm: null, rpd: 1500}
+    concurrency: 3
+    settings:
+      thinking: high
+      max_output_tokens: 65536
+      timeout_s: 300
+  fast_backup:
+    model: google:gemini-3.5-flash-lite
+    key_env: GEMINI_API_KEY_BACKUP
+    rpm: 15
+    cap_per_day: 150
+    concurrency: 3
+    settings:
+      thinking: high
+      max_output_tokens: 65536
+      timeout_s: 300
+  open_main:
+    model: google:gemma-4-31b-it
+    key_env: GEMINI_API_KEY_MAIN
+    rpm: 15
     cap_per_day: 300
-    concurrency_per_key: 2
-    max_output_tokens: 32768
-  qwen:                           # last resort, and the ONLY model that ever sees private notes
-    id: Qwen/Qwen3.6-27B-FP8      # runs on Modal's A100 80GB, costs credits
-  # Not used: gemini-3.8-flash (20/day free, overloaded on the free tier on 2026-11-19).
-
-# When a model fails on both keys (busy, limit, error), try the next one. All free.
-# Qwen on Modal comes after the last one (phase 3).
-fallback:
-  hydrogen: [flash_lite, gemma]
-  flash_lite: [gemma]
-  gemma: []
-
-# How every Gemini/Gemma call runs (owner's choice: big limits, think hard).
-llm:
-  thinking_level: high            # low | medium | high (Hydrogen also has xhigh)
-  max_output_tokens: 65536        # capped per model by models.<job>.max_output_tokens
-  max_input_tokens: 240000        # per request. Models read up to 1M tokens, but the free tier
-                                  # allows 250,000 input tokens per minute per key.
-  request_timeout_seconds: 300    # high thinking can take a few minutes
-  temperature: null               # null = model default (1.0); Google advises not lowering it for Gemini 3+
-
-# Firecrawl (owner, 2026-11-19): read feeds/homepages that block our plain reader. Free plan = 1,000 credits/month.
-firecrawl: {monthly_credit_cap: 900, daily_credit_cap: 40}
-
+    concurrency: 2
+    settings:
+      thinking: high
+      max_output_tokens: 32768
+      timeout_s: 300
+  open_backup:
+    model: google:gemma-4-31b-it
+    key_env: GEMINI_API_KEY_BACKUP
+    rpm: 15
+    cap_per_day: 300
+    concurrency: 2
+    settings:
+      thinking: high
+      max_output_tokens: 32768
+      timeout_s: 300
+  private:
+    model: openai-chat:Qwen/Qwen3.6-27B-FP8
+    base_url_env: QWEN_BASE_URL
+    key_env: QWEN_API_KEY
+    concurrency: 4
+    budget_guard: true
+    settings:
+      max_output_tokens: 16384
+      timeout_s: 1200
+    cold_start_seconds: 480
+firecrawl:
+  monthly_credit_cap: 900
+  daily_credit_cap: 40
 budget:
   modal_warn_usd: 20
   modal_stop_usd: 25
-  # From modal.com/pricing, checked 2026-11-19
-  a100_80gb_usd_per_second: 0.000694        # about $2.50/hour
-  cpu_usd_per_core_second: 0.0000131
-  memory_usd_per_gib_second: 0.00000222
-  cpu_allowance_usd_per_month: 1.0          # small fixed allowance for crons + webhook
-
+  a100_80gb_usd_per_second: 0.000694
+  cpu_usd_per_core_second: 1.31e-05
+  memory_usd_per_gib_second: 2.22e-06
+  cpu_allowance_usd_per_month: 1.0
 whatsapp:
-  graph_api_version: v27.0                  # current per Meta docs, 2026-11-19
-  window_minutes: 1430                      # treat the 24h window as 23h 50m
-
-reports: {friday: true, monthly: true}
-markets_like_ours: [India, Pakistan, Indonesia, Philippines, Vietnam, Nigeria, Kenya, Egypt, Middle East]
+  graph_api_version: v27.0
+  window_minutes: 1430
+reports:
+  friday: true
+  monthly: true
+markets_like_ours:
+- India
+- Pakistan
+- Indonesia
+- Philippines
+- Vietnam
+- Nigeria
+- Kenya
+- Egypt
+- Middle East
+min_picks: 3
+fill_min_score: 5.0
+ambition: any
+scoring:
+  bangladesh:
+    demand: 1.3
+    readiness: 1.0
+    competition_gap: 0.8
+    regulatory_path: 0.8
+    economics: 1.1
+    timing: 0.5
+  global:
+    demand_abroad: 1.3
+    remote_delivery: 1.0
+    cost_advantage: 0.9
+    trust_burden: 0.8
+    competition_gap: 0.8
+    timing: 0.5
+  evidence_bonus:
+    traction_known: 0.3
+    investor_known: 0.2
+  low_confidence_penalty: 1.0
+  unknown_product_max: 3
+verdicts:
+  strong: 8.0
+  promising: 6.5
+  watch: 5.0
+pool:
+  max_to_score: 120
+  max_share:
+    usa: 0.35
+    europe: 0.15
+    china: 0.1
+  min_share:
+    similar_markets: 0.4
+  max_ai_native_share: 0.4
+embedding_model: gemini-embedding-2
+dev_jobs:
+  extract:
+  - *id002
+  classify:
+  - *id002
+  score:
+  - *id002
+  card:
+  - *id002
+  deep_dive:
+  - *id002
+  friday:
+  - *id002
+  explore:
+  - *id002
+  ask:
+  - *id002
+  kit:
+  - *id002
+chat_jobs:
+- deep_dive
+- ask
+- kit
+- explore

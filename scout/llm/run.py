@@ -1,0 +1,179 @@
+"""The sole synchronous AI interface; one event loop owns cached provider clients."""
+
+import asyncio
+import os
+
+os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+import json
+import threading
+from dataclasses import dataclass
+from pydantic import BaseModel
+from pydantic_ai import Agent, NativeOutput
+from scout.config import config
+from scout.llm import registry, guard
+
+
+class LLMUnavailable(RuntimeError):
+    pass
+
+
+@dataclass
+class Result:
+    output: object
+    model: str
+    entry: str
+    usage: object = None
+
+    @property
+    def data(self):
+        return (
+            self.output.model_dump(by_alias=True)
+            if isinstance(self.output, BaseModel)
+            else self.output
+        )
+
+    @property
+    def text(self):
+        return (
+            json.dumps(self.data, ensure_ascii=False)
+            if not isinstance(self.output, str)
+            else self.output
+        )
+
+    @property
+    def model_id(self):
+        return self.model.split(":", 1)[-1]
+
+    @property
+    def key_label(self):
+        return self.entry
+
+
+_loop = None
+_loop_lock = threading.Lock()
+
+
+def event_loop():
+    global _loop
+    with _loop_lock:
+        if _loop is None:
+            _loop = asyncio.new_event_loop()
+            threading.Thread(
+                target=_loop.run_forever, daemon=True, name="scout-ai"
+            ).start()
+        return _loop
+
+
+def chain_for(job, private):
+    cfg = config()
+    if private:
+        return cfg["jobs"]["private"]
+    jobs = cfg.get("dev_jobs", {}) if os.environ.get("SCOUT_DEV") == "1" else {}
+    return jobs.get(job, cfg["jobs"].get(job, []))
+
+
+async def _run(
+    job, prompt, output_type, *, system=None, private=False, conn=None, validate=None
+):
+    chain = chain_for(job, private)
+    errors = []
+    for group in chain:
+        left = list(group)
+        while left:
+            entry = min(left, key=lambda e: (guard._busy[e], group.index(e)))
+            left.remove(entry)
+            guard._busy[entry] += 1
+            try:
+                entry_cfg = config()["models"][entry]
+                if private and (
+                    not entry_cfg.get("budget_guard")
+                    or not entry_cfg.get("base_url_env")
+                    or entry_cfg["model"].startswith("google:")
+                ):
+                    raise LLMUnavailable("Private chain contains a non-private model")
+                if os.environ.get("FORCE_GEMINI_FAIL") == "1" and config()["models"][
+                    entry
+                ]["model"].startswith("google:"):
+                    raise guard.CapReached("Forced Google failure")
+                model = guard.GuardedModel(entry, registry.get_model(entry), job, conn)
+                for attempt in range(2):
+                    try:
+                        agent = Agent(
+                            model=model,
+                            output_type=NativeOutput(output_type)
+                            if output_type
+                            else str,
+                            system_prompt=system or (),
+                            model_settings=registry.settings(entry),
+                            retries=0,
+                        )
+                        result = await agent.run(prompt)
+                        if validate:
+                            validate(result.output)
+                        return Result(
+                            result.output,
+                            config()["models"][entry]["model"],
+                            entry,
+                            result.usage,
+                        )
+                    except guard.CapReached:
+                        raise
+                    except Exception as exc:
+                        from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+                        if model.last_attempt and isinstance(
+                            exc, (ValueError, UnexpectedModelBehavior)
+                        ):
+                            with guard.usage_connection(conn) as log_conn:
+                                log_conn.execute(
+                                    "update usage set status='bad_output' where id=%s",
+                                    (model.last_attempt,),
+                                )
+                        if attempt or getattr(exc, "status_code", None) in (
+                            400,
+                            401,
+                            403,
+                            404,
+                            429,
+                        ):
+                            raise
+                        await asyncio.sleep(1)
+            except Exception as exc:
+                # Never persist provider exception bodies (they can include prompts/credentials).
+                errors.append(entry + ":" + type(exc).__name__)
+            finally:
+                guard._busy[entry] -= 1
+    raise LLMUnavailable("No model succeeded: " + ", ".join(errors))
+
+
+def run(
+    job,
+    prompt,
+    output_type=None,
+    *,
+    system=None,
+    private=False,
+    conn=None,
+    validate=None,
+):
+    return asyncio.run_coroutine_threadsafe(
+        _run(
+            job,
+            prompt,
+            output_type,
+            system=system,
+            private=private,
+            conn=conn,
+            validate=validate,
+        ),
+        event_loop(),
+    ).result()
+
+
+def run_many(job, prompts, output_type=None, **kw):
+    async def all_():
+        return await asyncio.gather(
+            *[_run(job, p, output_type, **kw) for p in prompts], return_exceptions=True
+        )
+
+    return asyncio.run_coroutine_threadsafe(all_(), event_loop()).result()

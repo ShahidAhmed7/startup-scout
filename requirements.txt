@@ -10,3 +10,4 @@ fastapi==0.165.0
 pytest==9.2.0
 tzdata==2026.1
 python-multipart==0.0.34
+pydantic-ai-slim[google,openai]==2.71.0
