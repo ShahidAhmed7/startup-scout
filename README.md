@@ -59,19 +59,19 @@
 ### Operate
 <table>
 <tr><td width="50%" valign="top"><b>Personalised ranking</b><br>Saves and skips refine future recommendations, within limits that keep results broad.</td><td width="50%" valign="top"><b>Weekly and monthly reports</b><br>New Y Combinator companies worth a look every week; funding trends in markets like Bangladesh every month.</td></tr>
-<tr><td width="50%" valign="top"><b>Private web archive</b><br>A secure, searchable archive of every card with filters, plus a board view of your notebook. Sign in from your phone with one tap.</td><td width="50%" valign="top"><b>Built for reliability</b><br>Multiple AI models back each other up, including a self-hosted fallback, with budget controls that keep it on free tiers.</td></tr>
+<tr><td width="50%" valign="top"><b>Private web archive</b><br>A secure, searchable archive of every card with filters, plus a board view of your notebook. Sign in from your phone with one tap.</td><td width="50%" valign="top"><b>Built for reliability</b><br>Multiple AI models back each other up, including a self-hosted fallback, with budget controls that keep it on free tiers. Overloaded providers are retried patiently, and a run that mostly fails stops and retries itself before the digest is due.</td></tr>
 </table>
 
 
 ## Opportunity scoring
 
-The pool is balanced before scoring: the US is capped at 35%, Europe at 15%, China at 10%, and Bangladesh plus similar markets target at least 40%. Regional caps can relax when other regions run out; shortages are recorded. AI-first startups are capped at 40% of the scored pool and 3 across picks and explore rows.
+Every candidate is first classified cheaply with Flash-Lite (region, sector, AI-first, whether the product is known). The pool is then balanced before scoring: the US is capped at 35%, Europe at 15%, China at 10%, and Bangladesh plus similar markets target at least 40%. Regional caps can relax when other regions run out; shortages are recorded. AI-first startups are capped at 40% of the scored pool and 3 across picks and explore rows.
 
-Bangladesh and global scores use separate market dimensions, with no technology or founder-profile bonus. **Strong** starts at 8, **Promising** at 6.5 and **Watch** at 5. Shown scores round half up, and the verdict word always matches the number shown (7 is Promising, 8 is Strong). A funding round is evidence of demand, not traction: without stated users, customers or revenue, demand abroad stays at 7 or below. The digest normally has up to 3 Bangladesh and 2 global picks. On a slow day, Watch ideas fill it to at least 3 when eligible candidates exist. At least 1 eligible pick comes from outside the US.
+Bangladesh and global scores use separate market dimensions, with no technology or founder-profile bonus. **Strong** starts at 8, **Promising** at 6.5 and **Watch** at 5; anything lower is **Low**. When a market has no sensible version, the card says so instead of listing scores. Shown scores round half up, and the verdict word always matches the number shown (7 is Promising, 8 is Strong). A funding round is evidence of demand, not traction: without stated users, customers or revenue, demand abroad stays at 7 or below. The digest normally has up to 3 Bangladesh and 2 global picks. On a slow day, Watch ideas fill it to at least 3 when eligible candidates exist. At least 1 eligible pick comes from outside the US.
 
-Effort is labelled separately: build type, capital (bootstrap, seed or venture), team size, licence route and time to revenue. Use `ambition any|lean|seed|venture` to filter the capital range. Unknown products are never shown.
+Effort is labelled separately: build type, capital (bootstrap, seed or venture), team size, licence route and time to revenue. Use `ambition any|lean|seed|venture` to filter the capital range. Unknown products are never shown, including hidden "stealth" listings and vague labels such as "a digital product". Cards and digest rows share one place label: the country when known, otherwise the news source's region (for example "India news") or "country unknown".
 
-All providers, keys, settings and fallback groups are configured in `config.yaml` and run through Pydantic AI. Both Google keys work in parallel. Private notes stay on the authenticated self-hosted endpoint. `--dev` selects Flash-Lite only, preserving stronger-model quota.
+All providers, keys, settings and fallback groups are configured in `config.yaml` and run through Pydantic AI. Both Google keys work in parallel. A "high demand" rejection from Google is retried with backoff and does not count against the daily caps. Private notes stay on the authenticated self-hosted endpoint; those long requests stream so they survive Modal's 150-second limit on silent requests, and the bot waits for the GPU to wake first. `--dev` selects Flash-Lite only, preserving stronger-model quota.
 
 ## Architecture
 
@@ -91,9 +91,9 @@ One serverless application on Modal runs the schedule, the daily pipeline, the W
   MODAL · SERVERLESS APPLICATION                 ▼
   ┌────────────────────┐  spawns  ┌──────────────────────────────┐  calls   ┌───────────────────────────┐
   │ tick               ├─────────►│ pipeline                     ├─────────►│ AI providers              │
-  │ scheduler          │          │ collect · extract · merge    │          │ Gemini 4 Hydrogen: judge  │
-  │ digest timing,     │          │ score · shortlist · research │          │ Gemini Flash-Lite: classify   │
-  │ reports, budget    │          │ cards · fact gate · digest   │          │ Gemma 4: fallback         │
+  │ scheduler          │          │ collect · extract · classify │          │ Gemini 4 Hydrogen: judge  │
+  │ digest timing,     │          │ balance · score · shortlist  │          │ Flash-Lite: bulk reading  │
+  │ reports, budget    │          │ research · cards · digest    │          │ Gemma 4: fallback         │
   └─────────┬──────────┘          └──────────────┬───────────────┘          └─────────────┬─────────────┘
             │                                    │ reads / writes                         │ last resort
             │                                    ▼                                        ▼
@@ -139,13 +139,24 @@ Every stage is automated; AI is used only where judgement is needed, and two saf
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ SCORE        dimension scores become 2 market scores: Bangladesh and     │
-  │              global · hard rubric caps · skip list · taste nudge     │
+  │ CLASSIFY     Flash-Lite labels region, sector, AI-first and whether  │
+  │              the product is known · skip list applied                │
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ SHORTLIST    Promising scores; Watch fills to 3 · diverse sectors ·   │
-  │              cap on AI-first picks · thin-information penalty        │
+  │ BALANCE      regional and AI-first shares set the scoring pool,      │
+  │              up to 120 startups · shortages recorded                 │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ SCORE        Hydrogen rates market dimensions; code weights them     │
+  │              into Bangladesh and global scores · evidence rules ·    │
+  │              taste nudge                                             │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ SHORTLIST    Promising first, Watch fills to 3 · different sectors · │
+  │              AI-first cap · a pick from outside the US · novelty     │
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
   ┌──────────────────────────────────────────────────────────────────────┐
@@ -163,7 +174,7 @@ Every stage is automated; AI is used only where judgement is needed, and two saf
   └───────────────────────────────────┬──────────────────────────────────┘                  │
                                       ▼                                                     │
   ┌──────────────────────────────────────────────────────────────────────┐  score dropped   │
-  │ RE-CHECK     re-score after research                                 ├──────────────────┘
+  │ RE-CHECK     re-score after research, re-run the selection           ├──────────────────┘
   │                                                                      │  swap in reserve
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
@@ -192,7 +203,8 @@ Private data never reaches a third-party provider, and the briefing keeps runnin
   │ ┌──────────────────────┐   in parallel  ┌───────────────────┐  │                │
   │ │ main key             │◄──────────────►│ backup key        │  │                │
   │ └──────────────────────┘                └───────────────────┘  │                │
-  │ daily caps · rate spacing · retries · schema validation · log  │                │
+  │ daily caps · rate spacing · schema validation · usage log      │                │
+  │ overload backoff: same key, other key, one more pass later     │                │
   └────────────────────────────────┬───────────────────────────────┘                │
                                    │ both keys fail                                 │
                                    ▼                                                │
@@ -284,6 +296,7 @@ Preview a full run without sending messages or retaining pipeline changes (usage
 
 ```bash
 .venv/bin/python -m scout.run --dry --dev
+.venv/bin/python -m pytest -q             # unit tests; never touch real services
 ```
 
 > [!TIP]
