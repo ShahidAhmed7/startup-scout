@@ -2,6 +2,7 @@
 
 Not a general chatbot (hard rule 8): free questions get "I only answer questions about your cards and saved ideas."
 """
+
 from __future__ import annotations
 
 import re
@@ -22,7 +23,7 @@ settings: your settings
 time 7:30: change the digest time
 mix 2+3: Bangladesh + global picks
 skip add crypto / skip remove space
-skills add mobile apps / skills remove mobile apps
+ambition lean|seed|venture|any
 ask <question>: about your last card or a saved idea
 note <idea>: <text>: a private note (stays on our own model)
 idea <name>: an idea's assumptions and status
@@ -39,11 +40,14 @@ UNKNOWN = "I don't know that one. Send help for the list of commands."
 
 # ---------------------------------------------------------------- helpers
 
+
 def reply(conn, body: str, kind: str = "reply") -> None:
     outbox.send_now(conn, outbox.text(body), kind)
 
 
-def buttons(conn, body: str, items: list[tuple[str, str]], kind: str = "buttons") -> None:
+def buttons(
+    conn, body: str, items: list[tuple[str, str]], kind: str = "buttons"
+) -> None:
     outbox.send_now(conn, [buttons_payload("", body, items)], kind)
 
 
@@ -70,7 +74,8 @@ def find_idea(conn, name: str) -> dict | None:
     """A saved idea by (part of) its startup name, or by its number in the `saved` list."""
     name = name.strip().lower()
     rows = conn.execute(
-        """select i.*, s.name from ideas i join startups s on s.id = i.startup_id order by i.created_at""").fetchall()
+        """select i.*, s.name from ideas i join startups s on s.id = i.startup_id order by i.created_at"""
+    ).fetchall()
     if name.isdigit() and 1 <= int(name) <= len(rows):
         return rows[int(name) - 1]
     exact = [r for r in rows if r["name"].lower() == name]
@@ -82,10 +87,13 @@ def find_idea(conn, name: str) -> dict | None:
 
 # ---------------------------------------------------------------- digest + cards
 
+
 def send_digest(conn, already_sent_ids: set[int]) -> None:
     today = datetime.now(DHAKA).date()
-    d = conn.execute("select * from digests where date = %s", (today,)).fetchone() or \
-        conn.execute("select * from digests order by date desc limit 1").fetchone()
+    d = (
+        conn.execute("select * from digests where date = %s", (today,)).fetchone()
+        or conn.execute("select * from digests order by date desc limit 1").fetchone()
+    )
     if d is None:
         hhmm = effective(conn)["digest_time"]
         reply(conn, f"No digest yet. Your first one comes at {hhmm} (Dhaka time).")
@@ -100,9 +108,39 @@ def open_card(conn, card_id: int) -> None:
     if c is None:
         reply(conn, "I can't find that card any more.")
         return
-    conn.execute("update owner_state set last_opened_card_id = %s where id = 1", (card_id,))
-    reply(conn, c["body"], "card")
-    buttons(conn, "What next?", [(f"save:{card_id}", "Save"), (f"skip:{card_id}", "Skip"), (f"more:{card_id}", "More")])
+    conn.execute(
+        "update owner_state set last_opened_card_id = %s where id = 1", (card_id,)
+    )
+    if (c.get("data_json") or {}).get("schema_version") == 2:
+        outbox.send_now(
+            conn,
+            [
+                buttons_payload(
+                    "",
+                    c["body"],
+                    [
+                        (f"save:{card_id}", "Save"),
+                        (f"skip:{card_id}", "Skip"),
+                        (f"more:{card_id}", "More"),
+                    ],
+                    header=c["title"]
+                    + (" (new round)" if c["data_json"].get("new_round") else ""),
+                    footer="More = full analysis, sources and score reasons",
+                )
+            ],
+            "card",
+        )
+    else:
+        reply(conn, c["body"], "card")
+        buttons(
+            conn,
+            "Open the analysis",
+            [
+                (f"save:{card_id}", "Save"),
+                (f"skip:{card_id}", "Skip"),
+                (f"more:{card_id}", "More"),
+            ],
+        )
 
 
 def save_card(conn, card_id: int) -> None:
@@ -111,12 +149,19 @@ def save_card(conn, card_id: int) -> None:
         reply(conn, "I can't find that card any more.")
         return
     conn.execute("insert into signals (card_id, kind) values (%s, 'save')", (card_id,))
-    idea = conn.execute("select id from ideas where startup_id = %s", (c["startup_id"],)).fetchone()
+    idea = conn.execute(
+        "select id from ideas where startup_id = %s", (c["startup_id"],)
+    ).fetchone()
     if idea:
         reply(conn, f"{c['title']} is already in your notebook. Send saved to see it.")
         return
-    conn.execute("insert into ideas (startup_id, status) values (%s, 'exploring')", (c["startup_id"],))
-    reply(conn, f"Saved {c['title']} to your notebook (Exploring). Send saved to see it.")
+    conn.execute(
+        "insert into ideas (startup_id, status) values (%s, 'exploring')",
+        (c["startup_id"],),
+    )
+    reply(
+        conn, f"Saved {c['title']} to your notebook (Exploring). Send saved to see it."
+    )
 
 
 def skip_card(conn, card_id: int) -> None:
@@ -132,51 +177,73 @@ def more_card(conn, card_id: int) -> None:
         reply(conn, "I can't find that card any more.")
         return
     conn.execute("insert into signals (card_id, kind) values (%s, 'more')", (card_id,))
-    conn.execute("update owner_state set last_opened_card_id = %s where id = 1", (card_id,))
+    conn.execute(
+        "update owner_state set last_opened_card_id = %s where id = 1", (card_id,)
+    )
     reply(conn, "Digging deeper. This takes a few minutes.")
     try:
         text, _ = deep_dive(conn, card_id)
     except Exception:
-        reply(conn, "Sorry, the deep dive failed (the AI models are busy). Tap More again in a while.")
+        reply(
+            conn,
+            "Sorry, the deep dive failed (the AI models are busy). Tap More again in a while.",
+        )
         return
     reply(conn, text, "deep_dive")
-    buttons(conn, "What next?", [(f"kit:{card_id}", "Validation kit"), (f"ask:{card_id}", "Ask"),
-                                 (f"save:{card_id}", "Save")])
+    buttons(
+        conn,
+        "What next?",
+        [
+            (f"kit:{card_id}", "Validation kit"),
+            (f"ask:{card_id}", "Ask"),
+            (f"save:{card_id}", "Save"),
+        ],
+    )
 
 
 # ---------------------------------------------------------------- notebook + settings
+
 
 def saved_list(conn) -> None:
     rows = conn.execute(
         """select i.id, i.status, i.created_at, s.name,
              (select count(*) from notes n where n.idea_id = i.id) as notes
-           from ideas i join startups s on s.id = i.startup_id order by i.created_at""").fetchall()
+           from ideas i join startups s on s.id = i.startup_id order by i.created_at"""
+    ).fetchall()
     if not rows:
         reply(conn, "Your notebook is empty. Tap Save on a card to add an idea.")
         return
     lines = ["*Your notebook*"]
     for n, r in enumerate(rows, 1):
         extra = f", {r['notes']} notes" if r["notes"] else ""
-        lines.append(f"{n}. {r['name']}: {r['status'].capitalize()}{extra} (saved {r["created_at"].astimezone(DHAKA):%d %b})")
-    lines.append("\nSend kit <name> for a validation kit, or note <name>: <text> to add a private note.")
+        lines.append(
+            f"{n}. {r['name']}: {r['status'].capitalize()}{extra} (saved {r['created_at'].astimezone(DHAKA):%d %b})"
+        )
+    lines.append(
+        "\nSend kit <name> for a validation kit, or note <name>: <text> to add a private note."
+    )
     reply(conn, "\n".join(lines))
 
 
 def settings_text(conn) -> None:
     cfg = effective(conn)
     mix = cfg["digest_mix"]
-    m = cfg["models"]
-    reply(conn, "\n".join([
-        "*Settings*",
-        f"Digest time: {cfg['digest_time']} (Dhaka)",
-        f"Mix: {mix['bangladesh']} Bangladesh + {mix['global']} global",
-        f"Minimum score: {cfg['min_score']}",
-        f"Skip list: {', '.join(cfg['skip_list']) or 'none'}",
-        f"Your skills: {', '.join(cfg['owner']['skills'])}",
-        f"Models: {m['hydrogen']['id']} first, then {m['flash_lite']['id']}, {m['gemma']['id']}, Qwen as last resort",
-        "",
-        "Change with: time 7:30 · mix 2+3 · skip add crypto · skills add mobile apps",
-    ]))
+    reply(
+        conn,
+        "\n".join(
+            [
+                "*Settings*",
+                f"Digest time: {cfg['digest_time']} (Dhaka)",
+                f"Mix: {mix['bangladesh']} Bangladesh + {mix['global']} global",
+                f"Minimum score: {cfg['min_score']}",
+                f"Skip list: {', '.join(cfg['skip_list']) or 'none'}",
+                f"Ambition: {cfg['ambition']}",
+                f"Reports: Friday {cfg['reports']['friday']}, monthly {cfg['reports']['monthly']}",
+                "",
+                "Change with: time 7:30 · mix 2+3 · skip add crypto · ambition lean",
+            ]
+        ),
+    )
 
 
 def set_time(conn, h: int, mnt: int, ampm: str | None) -> None:
@@ -203,16 +270,18 @@ def set_mix(conn, bd: int, gl: int) -> None:
 
 def edit_list(conn, key: str, action: str, value: str) -> None:
     cfg = effective(conn)
-    current = list(cfg["skip_list"] if key == "skip_list" else cfg["owner"]["skills"])
+    current = list(cfg["skip_list"])
     value = value.strip().rstrip(".")
-    label = "Skip list" if key == "skip_list" else "Skills"
+    label = "Skip list"
     if action == "add":
         if value.lower() in (v.lower() for v in current):
             reply(conn, f"'{value}' is already there.")
             return
         current.append(value)
     else:
-        match = [v for v in current if v.lower() == value.lower()] or [v for v in current if value.lower() in v.lower()]
+        match = [v for v in current if v.lower() == value.lower()] or [
+            v for v in current if value.lower() in v.lower()
+        ]
         if not match:
             reply(conn, f"'{value}' isn't in the list. {label}: {', '.join(current)}")
             return
@@ -223,40 +292,66 @@ def edit_list(conn, key: str, action: str, value: str) -> None:
 
 # ---------------------------------------------------------------- dispatcher
 
+
 def explore_startup(conn, startup_id: int) -> None:
     """A "More to explore" row: open its card, writing it first if needed (Hydrogen, 'explore' job)."""
     from scout import cards as cards_mod
     from scout.run import today_dhaka
 
-    c = conn.execute("select id from cards where startup_id = %s and kind = 'card' order by id desc limit 1",
-                     (startup_id,)).fetchone()
+    c = conn.execute(
+        "select id from cards where startup_id = %s and kind = 'card' order by id desc limit 1",
+        (startup_id,),
+    ).fetchone()
     if c is None:
-        sc = conn.execute("select scores_json from scores where startup_id = %s order by created_at desc limit 1",
-                          (startup_id,)).fetchone()
+        sc = conn.execute(
+            "select scores_json from scores where startup_id = %s order by created_at desc limit 1",
+            (startup_id,),
+        ).fetchone()
         if sc is None:
             reply(conn, "I can't find that startup any more.")
             return
         j = sc["scores_json"]
-        market = "bangladesh" if j.get("bangladesh", 0) >= j.get("global", 0) else "global"
+        market = (
+            "bangladesh" if j.get("bangladesh", 0) >= j.get("global", 0) else "global"
+        )
         reply(conn, "Writing this card. This takes a few minutes.")
         try:
-            res = cards_mod.write_cards(conn, [({"startup_id": startup_id}, market)], today_dhaka(), set(),
-                                        job="explore")
+            res = cards_mod.write_cards(
+                conn,
+                [({"startup_id": startup_id}, market)],
+                today_dhaka(),
+                set(),
+                job="explore",
+            )
         except Exception:
             res = {"card_ids": []}
         if not res["card_ids"]:
-            reply(conn, "Sorry, I couldn't write that card right now (the AI models are busy). Try again later.")
+            reply(
+                conn,
+                "Sorry, I couldn't write that card right now (the AI models are busy). Try again later.",
+            )
             return
         open_card(conn, res["card_ids"][0])
         return
     open_card(conn, c["id"])
 
 
-BUTTONS = {"card": open_card, "save": save_card, "skip": skip_card, "more": more_card, "startup": explore_startup}
+BUTTONS = {
+    "card": open_card,
+    "save": save_card,
+    "skip": skip_card,
+    "more": more_card,
+    "startup": explore_startup,
+}
 
 
 def handle(conn, msg: dict) -> None:
-    sent_digests = {d["id"] for d in conn.execute("select id from digests where status = 'pending'").fetchall()}
+    sent_digests = {
+        d["id"]
+        for d in conn.execute(
+            "select id from digests where status = 'pending'"
+        ).fetchall()
+    }
     outbox.flush_pending(conn)
     kind, value = parse(msg)
 
@@ -267,7 +362,9 @@ def handle(conn, msg: dict) -> None:
             return
         from scout import notebook, watches
 
-        if notebook.handle_button(conn, prefix, arg) or watches.handle_button(conn, prefix, arg):
+        if notebook.handle_button(conn, prefix, arg) or watches.handle_button(
+            conn, prefix, arg
+        ):
             return
         reply(conn, UNKNOWN)
         return
@@ -301,8 +398,11 @@ def handle(conn, msg: dict) -> None:
         if not base:
             reply(conn, "The archive address isn't set up yet.")
             return
-        reply(conn, "Your private archive (link works for 15 minutes, then you stay signed in for 30 days on this "
-                    "phone):\n" + login_link(base))
+        reply(
+            conn,
+            "Your private archive (link works for 15 minutes, then you stay signed in for 30 days on this "
+            "phone):\n" + login_link(base),
+        )
         return
     m = re.fullmatch(r"time\s+(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?", low)
     if m:
@@ -316,9 +416,13 @@ def handle(conn, msg: dict) -> None:
     if m:
         edit_list(conn, "skip_list", m.group(1).lower(), m.group(2))
         return
-    m = re.fullmatch(r"skills?\s+(add|remove)\s+(.+)", text.strip(), re.I)
+    m = re.fullmatch(r"ambition\s+(any|lean|seed|venture)", low)
     if m:
-        edit_list(conn, "owner_skills", m.group(1).lower(), m.group(2))
+        set_value(conn, "ambition", m.group(1))
+        reply(conn, "Done. Ambition: " + m.group(1) + ".")
+        return
+    if low.startswith("ambition"):
+        reply(conn, "Use: ambition any|lean|seed|venture")
         return
 
     from scout import notebook, watches
@@ -332,21 +436,29 @@ def handle_stored(conn, wamid: str) -> None:
     """Entry point for the async worker: process one stored inbound message, once."""
     import json
 
-    row = conn.execute("select * from messages where wa_message_id = %s and direction = 'in'", (wamid,)).fetchone()
+    row = conn.execute(
+        "select * from messages where wa_message_id = %s and direction = 'in'", (wamid,)
+    ).fetchone()
     if row is None:
         return
     claimed = conn.execute(
         "update messages set type = type || ':done' where id = %s and type not like '%%:done' returning id",
-        (row["id"],)).fetchone()
+        (row["id"],),
+    ).fetchone()
     if not claimed:
         return  # already handled (idempotency by WhatsApp message id)
     if wamid.startswith("selftest."):
         # Self-test from Claude: run the real code path but only print replies (nothing reaches the phone).
         import os
+
         old = os.environ.get("DRY_RUN")
         os.environ["DRY_RUN"] = "1"
         try:
-            handle(conn, json.loads(row["body"]))
+            from psycopg import Rollback
+
+            with conn.transaction():
+                handle(conn, json.loads(row["body"]))
+                raise Rollback()
         finally:
             if old is None:
                 os.environ.pop("DRY_RUN", None)

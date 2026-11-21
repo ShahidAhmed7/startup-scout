@@ -1,39 +1,16 @@
 from scout.config import SOURCE_KINDS, SOURCE_STATUSES, config, sources
 
 
-def test_config_has_required_sections():
+def test_config_routing_and_scoring():
     cfg = config()
-    for key in ("timezone", "digest_mix", "skip_list", "weights", "models", "fallback", "llm", "budget", "whatsapp"):
-        assert key in cfg
-    assert cfg["output_language"] == "English"
-    assert cfg["budget"]["modal_warn_usd"] < cfg["budget"]["modal_stop_usd"] <= 25
-
-
-def test_owner_model_choices():
-    m = config()["models"]
-    assert m["hydrogen"]["id"] == "gemini-4-hydrogen"
-    assert m["flash_lite"]["id"] == "gemini-3.5-flash-lite"
-    assert m["gemma"]["id"] == "gemma-4-31b-it"
-    assert config()["fallback"]["hydrogen"] == ["flash_lite", "gemma"]
-    assert config()["llm"]["thinking_level"] == "high"
-
-
-def test_our_caps_stay_below_free_limits():
-    for alias in ("hydrogen", "flash_lite", "gemma"):
-        mc = config()["models"][alias]
-        assert mc["cap_per_day"] < mc["free_limits"]["rpd"], alias
-
-
-def test_fallbacks_point_at_real_models():
-    models = config()["models"]
-    for alias, chain in config()["fallback"].items():
-        assert alias in models
-        assert all(a in models and a != "qwen" for a in chain), "Qwen is reached by the router, not the chain"
-
-
-def test_input_budget_fits_free_tier_tokens_per_minute():
-    cfg = config()
-    assert cfg["llm"]["max_input_tokens"] <= cfg["models"]["hydrogen"]["free_limits"]["tpm"]
+    assert cfg["jobs"]["score"][0] == ["strong_main", "strong_backup"]
+    assert cfg["jobs"]["private"] == [["private"]]
+    assert cfg["min_score"] == 6.5 and cfg["fill_min_score"] == 5
+    assert cfg["budget"]["modal_stop_usd"] <= 25
+    for key in ("weights", "owner", "ai_angle", "min_feasibility"):
+        assert key not in cfg
+    for chain in list(cfg["jobs"].values()) + list(cfg["dev_jobs"].values()):
+        assert all(entry in cfg["models"] for group in chain for entry in group)
 
 
 def test_sources_are_well_formed():
@@ -56,14 +33,24 @@ def test_yc_and_us_sources_are_high_priority_and_active():
 
 def test_every_requested_region_has_an_active_source():
     regions = {s["region"] for s in sources("active")}
-    for r in ("usa", "india", "pakistan", "mideast", "africa", "sea", "china", "bangladesh", "europe"):
+    for r in (
+        "usa",
+        "india",
+        "pakistan",
+        "mideast",
+        "africa",
+        "sea",
+        "china",
+        "bangladesh",
+        "europe",
+    ):
         assert r in regions, r
 
 
-def test_hydrogen_is_first_for_every_judgement_job():
-    jobs = config()["jobs"]
-    for job in ("score", "card", "deep_dive", "friday", "ask"):
-        assert jobs[job] == "hydrogen", job
-    assert jobs["extract"] == "flash_lite"  # bulk work: too many calls for Hydrogen's 20/day per key
-    hy = config()["models"]["hydrogen"]
-    assert 0 < hy["reserve_for_chat"] < 2 * hy["cap_per_day"]
+def test_prompts_have_no_owner_profile_bias():
+    import inspect
+    from scout.llm import prompts
+
+    text = inspect.getsource(prompts).lower()
+    for term in ("skills", "2-3", "small team", "field is ai", "fits_you"):
+        assert term not in text

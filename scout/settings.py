@@ -1,4 +1,5 @@
 """Effective settings = config.yaml, overridden by values the owner set by chat (`settings` table)."""
+
 from __future__ import annotations
 
 import copy
@@ -6,7 +7,7 @@ import json
 
 from scout.config import config
 
-CHAT_KEYS = ("digest_time", "digest_mix", "skip_list", "owner_skills")
+CHAT_KEYS = ("digest_time", "digest_mix", "skip_list", "ambition")
 
 
 def effective(conn=None) -> dict:
@@ -15,15 +16,15 @@ def effective(conn=None) -> dict:
         return cfg
     for row in conn.execute("select key, value from settings").fetchall():
         v = row["value"]
-        if row["key"] == "owner_skills":
-            cfg["owner"]["skills"] = v
-        elif row["key"] in cfg:
+        if row["key"] in CHAT_KEYS:
             cfg[row["key"]] = v
     return cfg
 
 
 def set_value(conn, key: str, value) -> None:
     assert key in CHAT_KEYS
-    conn.execute("""insert into settings (key, value) values (%s, %s)
+    conn.execute(
+        """insert into settings (key, value) values (%s, %s)
                     on conflict (key) do update set value = excluded.value, updated_at = now()""",
-                 (key, json.dumps(value)))
+        (key, json.dumps(value)),
+    )

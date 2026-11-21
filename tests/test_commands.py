@@ -5,18 +5,30 @@ from scout.whatsapp import commands
 
 def test_parse_text_button_and_list():
     assert commands.parse({"type": "text", "text": {"body": " hi "}}) == ("text", "hi")
-    assert commands.parse({"type": "interactive", "interactive": {"type": "button_reply",
-                                                                  "button_reply": {"id": "save:3"}}}) == ("button", "save:3")
-    assert commands.parse({"type": "interactive", "interactive": {"type": "list_reply",
-                                                                  "list_reply": {"id": "card:9"}}}) == ("button", "card:9")
+    assert commands.parse(
+        {
+            "type": "interactive",
+            "interactive": {"type": "button_reply", "button_reply": {"id": "save:3"}},
+        }
+    ) == ("button", "save:3")
+    assert commands.parse(
+        {
+            "type": "interactive",
+            "interactive": {"type": "list_reply", "list_reply": {"id": "card:9"}},
+        }
+    ) == ("button", "card:9")
     assert commands.parse({"type": "image"}) == ("other", "image")
 
 
 @pytest.fixture
 def capture(monkeypatch):
     out = {"replies": [], "settings": {}}
-    monkeypatch.setattr(commands, "reply", lambda conn, body, kind="reply": out["replies"].append(body))
-    monkeypatch.setattr(commands, "set_value", lambda conn, k, v: out["settings"].__setitem__(k, v))
+    monkeypatch.setattr(
+        commands, "reply", lambda conn, body, kind="reply": out["replies"].append(body)
+    )
+    monkeypatch.setattr(
+        commands, "set_value", lambda conn, k, v: out["settings"].__setitem__(k, v)
+    )
     monkeypatch.setattr(commands.outbox, "flush_pending", lambda conn: 0)
     return out
 
@@ -29,6 +41,7 @@ class Conn:
 
             def fetchone(self):
                 return None
+
         return R()
 
 
@@ -36,8 +49,15 @@ def text(body):
     return {"type": "text", "text": {"body": body}}
 
 
-@pytest.mark.parametrize("msg,value", [("time 7:30", "07:30"), ("TIME 19:05", "19:05"), ("time 7pm", "19:00"),
-                                       ("time 12:15 am", "00:15")])
+@pytest.mark.parametrize(
+    "msg,value",
+    [
+        ("time 7:30", "07:30"),
+        ("TIME 19:05", "19:05"),
+        ("time 7pm", "19:00"),
+        ("time 12:15 am", "00:15"),
+    ],
+)
 def test_time_command(capture, msg, value):
     commands.handle(Conn(), text(msg))
     assert capture["settings"]["digest_time"] == value
@@ -52,7 +72,10 @@ def test_mix_command(capture):
     commands.handle(Conn(), text("mix 2+3"))
     assert capture["settings"]["digest_mix"] == {"bangladesh": 2, "global": 3}
     commands.handle(Conn(), text("mix 8+5"))
-    assert capture["settings"]["digest_mix"] == {"bangladesh": 2, "global": 3}  # over 10 rejected
+    assert capture["settings"]["digest_mix"] == {
+        "bangladesh": 2,
+        "global": 3,
+    }  # over 10 rejected
 
 
 def test_skip_add_and_remove(capture):
@@ -72,3 +95,21 @@ def test_not_a_general_chatbot(capture):
 def test_help(capture):
     commands.handle(Conn(), text("Help"))
     assert capture["replies"][-1].startswith("*Commands*")
+
+
+@pytest.mark.parametrize("value", ["any", "lean", "seed", "venture"])
+def test_ambition_command(capture, value):
+    commands.handle(Conn(), text("ambition " + value))
+    assert capture["settings"]["ambition"] == value
+
+
+def test_skills_command_removed(capture):
+    commands.handle(Conn(), text("skills add Python"))
+    assert "owner_skills" not in capture["settings"]
+    assert capture["replies"][-1] == commands.UNKNOWN
+
+
+def test_invalid_ambition_rejected(capture):
+    commands.handle(Conn(), text("ambition giant"))
+    assert not capture["settings"]
+    assert "any|lean|seed|venture" in capture["replies"][-1]
