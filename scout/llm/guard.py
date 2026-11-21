@@ -14,6 +14,40 @@ class CapReached(RuntimeError):
     pass
 
 
+# Statuses that never reached the model (rejected or blocked): they do not count against our daily caps.
+NOT_COUNTED = ("quota", "cap", "network", "unavailable")
+
+
+def transient(exc) -> bool:
+    """Provider overload or a dropped connection: worth retrying later on the same model."""
+    from pydantic_ai.exceptions import ModelUnavailableError
+
+    code = getattr(exc, "status_code", None)
+    names = type(exc).__name__ + " " + type(exc.__cause__ or exc).__name__
+    return (
+        isinstance(exc, ModelUnavailableError)
+        or code in (500, 502, 503, 504)
+        or "Timeout" in names
+        or "ConnectError" in names
+    )
+
+
+def attempt_status(exc) -> str:
+    from pydantic_ai.exceptions import ModelUnavailableError
+
+    code = getattr(exc, "status_code", None)
+    if code == 429:
+        return "quota"
+    if code in (401, 403):
+        return "auth"
+    # 503 "high demand": Google rejected the request before running the model.
+    if isinstance(exc, ModelUnavailableError) or code == 503:
+        return "unavailable"
+    if "Timeout" in type(exc).__name__ + type(exc.__cause__ or exc).__name__:
+        return "timeout"
+    return "server"
+
+
 _busy = defaultdict(int)
 _slots = {}
 _next = defaultdict(float)
@@ -61,8 +95,8 @@ def reserve_attempt(conn, entry, job):
         if "cap_per_day" in cfg:
             used = conn.execute(
                 """select count(*) n from usage where model_id = %s and key_label = any(%s)
-                and status not in ('quota','cap','network') and created_at >= %s""",
-                (model, aliases, repo.pacific_day_start()),
+                and status <> all(%s) and created_at >= %s""",
+                (model, aliases, list(NOT_COUNTED), repo.pacific_day_start()),
             ).fetchone()["n"]
             cap = cfg["cap_per_day"] - (
                 cfg.get("reserve_for_chat", 0)
@@ -130,23 +164,23 @@ class GuardedModel(WrapperModel):
                     status = "ok"
                     return response
                 except Exception as exc:
-                    code = getattr(exc, "status_code", None)
-                    status = (
-                        "quota"
-                        if code == 429
-                        else "auth"
-                        if code in (401, 403)
-                        else "server"
-                    )
+                    status = attempt_status(exc)
                     raise
                 finally:
                     seconds = time.monotonic() - start
                     usage = response.usage if response else None
-                    gpu = (
-                        seconds + cfg.get("cold_start_seconds", 480) + 120
-                        if cfg.get("budget_guard")
-                        else None
-                    )
+                    gpu = None
+                    if cfg.get("budget_guard"):
+                        # One container serves everything: only the first request of a burst pays the cold
+                        # start and the idle tail; later ones in the same window run on the warm GPU.
+                        warm = conn.execute(
+                            """select 1 from usage where provider='qwen' and id < %s and status <> 'cap'
+                            and created_at > now() - make_interval(secs => %s) limit 1""",
+                            (attempt, seconds + 300),
+                        ).fetchone()
+                        gpu = seconds + (
+                            0 if warm else cfg.get("cold_start_seconds", 480) + 120
+                        )
                     conn.execute(
                         """update usage set status=%s,tokens_in=%s,tokens_out=%s,seconds=%s,gpu_seconds=%s
                         where id=%s""",

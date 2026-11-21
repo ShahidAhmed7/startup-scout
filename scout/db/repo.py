@@ -80,11 +80,11 @@ def pacific_day_start(now: datetime | None = None) -> datetime:
 
 
 def gemini_calls_today(conn, model_id: str, key_label: str) -> int:
-    """Calls that reached Google today (Pacific day). Rejected 429s and our own cap blocks don't count."""
+    """Calls that reached Google today (Pacific day). Rejected 429/503s and our own cap blocks don't count."""
     row = conn.execute(
         """select count(*) as n from usage
            where provider = 'gemini' and model_id = %s and key_label = %s
-             and status not in ('quota', 'cap', 'network') and created_at >= %s""",
+             and status not in ('quota', 'cap', 'network', 'unavailable') and created_at >= %s""",
         (model_id, key_label, pacific_day_start()),
     ).fetchone()
     return row["n"]

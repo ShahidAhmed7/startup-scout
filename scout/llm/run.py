@@ -5,6 +5,7 @@ import os
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 import json
+import random
 import threading
 from dataclasses import dataclass
 from pydantic import BaseModel
@@ -14,7 +15,7 @@ from scout.llm import registry, guard
 
 
 class LLMUnavailable(RuntimeError):
-    pass
+    transient_only = False
 
 
 @dataclass
@@ -72,11 +73,30 @@ def chain_for(job, private):
     return jobs.get(job, cfg["jobs"].get(job, []))
 
 
-async def _run(
+# Google's free tier answers 503 "high demand" in bursts. Retry the same entry after these pauses (seconds),
+# then the other key, then the next group; if the whole chain only met overloads, wait and try it once more.
+BACKOFF = (4, 15)
+CHAIN_PATIENCE = 45
+
+
+async def _run(job, prompt, output_type, **kw):
+    try:
+        return await _run_chain(job, prompt, output_type, **kw)
+    except LLMUnavailable as exc:
+        if not exc.transient_only:
+            raise
+    await asyncio.sleep(CHAIN_PATIENCE + random.uniform(0, 10))
+    return await _run_chain(job, prompt, output_type, **kw)
+
+
+async def _run_chain(
     job, prompt, output_type, *, system=None, private=False, conn=None, validate=None
 ):
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
     chain = chain_for(job, private)
     errors = []
+    transient_only = True
     for group in chain:
         left = list(group)
         while left:
@@ -91,12 +111,14 @@ async def _run(
                     or entry_cfg["model"].startswith("google:")
                 ):
                     raise LLMUnavailable("Private chain contains a non-private model")
-                if os.environ.get("FORCE_GEMINI_FAIL") == "1" and config()["models"][
-                    entry
-                ]["model"].startswith("google:"):
+                if os.environ.get("FORCE_GEMINI_FAIL") == "1" and entry_cfg[
+                    "model"
+                ].startswith("google:"):
                     raise guard.CapReached("Forced Google failure")
                 model = guard.GuardedModel(entry, registry.get_model(entry), job, conn)
-                for attempt in range(2):
+                retries = 0  # bad output and unknown errors: one retry on the same entry
+                waits = list(BACKOFF)  # overloads and timeouts: a few patient retries
+                while True:
                     try:
                         agent = Agent(
                             model=model,
@@ -112,38 +134,45 @@ async def _run(
                             validate(result.output)
                         return Result(
                             result.output,
-                            config()["models"][entry]["model"],
+                            entry_cfg["model"],
                             entry,
                             result.usage,
                         )
                     except guard.CapReached:
                         raise
                     except Exception as exc:
-                        from pydantic_ai.exceptions import UnexpectedModelBehavior
-
-                        if model.last_attempt and isinstance(
+                        bad_output = isinstance(
                             exc, (ValueError, UnexpectedModelBehavior)
-                        ):
+                        )
+                        if model.last_attempt and bad_output:
                             with guard.usage_connection(conn) as log_conn:
                                 log_conn.execute(
                                     "update usage set status='bad_output' where id=%s",
                                     (model.last_attempt,),
                                 )
-                        if attempt or getattr(exc, "status_code", None) in (
+                        if not bad_output and guard.transient(exc) and waits:
+                            await asyncio.sleep(waits.pop(0) + random.uniform(0, 2))
+                            continue
+                        if retries or getattr(exc, "status_code", None) in (
                             400,
                             401,
                             403,
                             404,
                             429,
-                        ):
+                        ) or (not bad_output and guard.transient(exc)):
                             raise
+                        retries += 1
                         await asyncio.sleep(1)
             except Exception as exc:
                 # Never persist provider exception bodies (they can include prompts/credentials).
                 errors.append(entry + ":" + type(exc).__name__)
+                if not guard.transient(exc):
+                    transient_only = False
             finally:
                 guard._busy[entry] -= 1
-    raise LLMUnavailable("No model succeeded: " + ", ".join(errors))
+    err = LLMUnavailable("No model succeeded: " + ", ".join(errors))
+    err.transient_only = bool(errors) and transient_only
+    raise err
 
 
 def run(

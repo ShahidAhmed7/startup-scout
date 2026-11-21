@@ -158,10 +158,18 @@ def run_pipeline(
         stats["extract"] = ex["stats"]
         m = merge(conn, ex["facts"])
         stats["merge"] = {k: len(v) if isinstance(v, set) else v for k, v in m.items()}
+        if candidate_ids is None:
+            # A retry after a failure finds the day's items already extracted: include every startup touched
+            # since the first attempt (within the last 12 hours), so the retry scores the same day's news.
+            earlier = conn.execute(
+                """select s.id from startups s where s.last_seen_at >= (
+                     select min(started_at) from runs where kind='pipeline' and started_at > now() - interval '12 hours')""",
+            ).fetchall()
+            touched = set(m["touched"]) | {r["id"] for r in earlier}
         ids = (
             candidate_ids
             if candidate_ids is not None
-            else candidates(conn, m["touched"], m["new_round"])
+            else candidates(conn, touched, m["new_round"])
         )
         if not ids and os.environ.get("DRY_RUN") == "1":
             ids = [
@@ -173,6 +181,10 @@ def run_pipeline(
         stats["candidates"] = len(ids)
         print(f"Classifying {len(ids)} candidates", flush=True)
         classified, stats["classify"] = classify(conn, ids)
+        batches = -(-len(ids) // 20)
+        if batches and stats["classify"]["failed_batches"] * 2 > batches:
+            # A digest built from a fraction of the day's startups is worse than the tick's retry.
+            raise RuntimeError("Most classification batches failed")
         pool_cfg = dict(cfg["pool"])
         if limit is not None:
             pool_cfg["max_to_score"] = limit
