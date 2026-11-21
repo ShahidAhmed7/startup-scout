@@ -7,7 +7,7 @@ from datetime import date
 
 from collections import Counter
 
-from scout.normalize import region_of
+from scout.normalize import place_label, region_of
 from scout.score import half_up
 from scout.whatsapp.formats import clip, list_payload, row_title, text_payload
 
@@ -36,7 +36,7 @@ def _row(conn, cid: int, market: str) -> dict:
         "id": f"card:{cid}",
         "title": row_title(c["title"], label),
         "description": clip(
-            f"{clip(what, 38)} · {c['country'] or (c.get('region') or 'unknown').title()} · {round_txt}",
+            f"{clip(what, 38)} · {place_label(c['country'], c.get('region'))} · {round_txt}",
             72,
         ),
     }
@@ -63,7 +63,7 @@ def _explore_row(conn, sid: int) -> dict:
         "id": f"startup:{sid}",
         "title": row_title(c["name"], label),
         "description": clip(
-            f"{clip(what, 34)} · {c['country'] or (c.get('region') or 'unknown').title()} · {round_txt}",
+            f"{clip(what, 34)} · {place_label(c['country'], c.get('region'))} · {round_txt}",
             72,
         ),
     }

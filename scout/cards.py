@@ -270,10 +270,27 @@ def _sources(f: dict, data: dict) -> list[str]:
     return out[:8]
 
 
-def score_line(j):
-    from scout.score import half_up, verdict
+def _no_version(j, market):
+    concept = j.get("concept_bd" if market == "bangladesh" else "concept_global")
+    return concept is not None and concept.strip().lower() in ("", "none")
 
-    return f"Bangladesh {half_up(j['bangladesh'])} · {verdict(j['bangladesh'])}   |   Global {half_up(j['global'])} · {verdict(j['global'])}"
+
+def score_line(j):
+    from scout.score import half_up, shown_verdict as verdict
+
+    parts = []
+    for market, label in (("bangladesh", "Bangladesh"), ("global", "Global")):
+        if _no_version(j, market):
+            parts.append(f"{label}: no version")
+        else:
+            parts.append(f"{label} {half_up(j[market])} · {verdict(j[market])}")
+    return "   |   ".join(parts)
+
+
+DIM_ORDER = {
+    "bangladesh": ["demand", "readiness", "competition_gap", "regulatory_path", "economics"],
+    "global": ["demand_abroad", "remote_delivery", "cost_advantage", "trust_burden", "competition_gap"],
+}
 
 
 def card_text(f, data, model_id, today, new_round=False):
@@ -292,7 +309,10 @@ def card_text(f, data, model_id, today, new_round=False):
     play = data["bangladesh_play" if market == "bangladesh" else "global_play"]
     play = " ".join(re.split(r"(?<=[.!?])\s+", play)[:2])
     idea = " ".join(data["one_liner"].split()[:15])
-    head = f"{clip(s['country'] or 'Country unknown', 40)} · {clip(round_txt, 70)} · announced {announced}\n{score_line(j)}\n\n*The idea*\n{idea}"
+    from scout.normalize import place_label
+
+    place = place_label(s["country"], s.get("region"))
+    head = f"{clip(place, 40)} · {clip(round_txt, 70)} · announced {announced}\n{score_line(j)}\n\n*The idea*\n{idea}"
     label = "In Bangladesh" if market == "bangladesh" else "Abroad from Bangladesh"
     risk = data["main_risk"]
 
@@ -347,11 +367,17 @@ def full_analysis(card, deep=None, include_model=False):
         "trust_burden": "trust",
     }
     for mk in ("bangladesh", "global"):
+        if _no_version(j, mk):
+            lines += [f"{mk.capitalize()}: no sensible version for this market."]
+            continue
+        order = [k for k in DIM_ORDER[mk] if k in dims[mk]] + [
+            k for k in dims[mk] if k not in DIM_ORDER[mk]
+        ]
         lines += [
             f"{mk.capitalize()} {half_up(j[mk])}: "
-            + " · ".join(f"{labels[k]} {v['score']}" for k, v in dims[mk].items())
+            + " · ".join(f"{labels.get(k, k)} {dims[mk][k]['score']}" for k in order)
         ]
-        lines += [f"- {labels[k]}: {v['reason']}" for k, v in dims[mk].items()]
+        lines += [f"- {labels.get(k, k)}: {dims[mk][k]['reason']}" for k in order]
     lines += [f"Timing {j['timing']['score']}: {j['timing']['reason']}"]
     if u.get("changed"):
         lines += [
@@ -361,17 +387,22 @@ def full_analysis(card, deep=None, include_model=False):
         lines += ["AI angle: " + d["ai_angle"]]
     if deep:
         lines += ["", "*Deep dive*"]
-        for key in (
-            "landscape",
-            "failure_check",
-            "economics",
-            "regulatory_route",
-            "first_customers",
-            "validation_30_days",
-            "risks",
+        for key, title in (
+            ("landscape", "Landscape"),
+            ("failure_check", "Who tried and failed"),
+            ("economics", "Economics (estimates)"),
+            ("regulatory_route", "Licence route"),
+            ("first_customers", "First 100 customers"),
+            ("validation_30_days", "30-day test plan"),
+            ("risks", "Risks"),
         ):
-            v = deep.get(key, "unknown")
-            lines += ["\n".join("- " + x for x in v) if isinstance(v, list) else v]
+            v = deep.get(key) or "unknown"
+            body = (
+                "\n".join("- " + x for x in v)
+                if isinstance(v, list)
+                else numbered_lines(v)
+            )
+            lines += [f"_{title}_", body]
     urls = list(
         dict.fromkeys(
             [*card.get("source_urls", []), *(deep or {}).get("source_urls", [])]

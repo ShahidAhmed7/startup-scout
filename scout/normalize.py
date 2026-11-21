@@ -64,7 +64,19 @@ _COUNTRY_SHORT = {
     "united arab emirates": "UAE", "people's republic of china": "China", "prc": "China",
     "republic of korea": "South Korea", "korea": "South Korea", "kingdom of saudi arabia": "Saudi Arabia",
     "ksa": "Saudi Arabia", "the netherlands": "Netherlands", "remote": "", "none": "", "unknown": "",
-    "global": "",
+    "global": "", "unspecified": "", "worldwide": "", "n/a": "",
+}
+# Two-letter codes (TrustMRR profiles and some feeds use ISO 3166 codes).
+_ISO2 = {
+    "us": "USA", "gb": "UK", "uk": "UK", "ca": "Canada", "au": "Australia", "nz": "New Zealand", "in": "India",
+    "pk": "Pakistan", "bd": "Bangladesh", "cn": "China", "hk": "Hong Kong", "tw": "Taiwan", "jp": "Japan",
+    "kr": "South Korea", "sg": "Singapore", "id": "Indonesia", "ph": "Philippines", "vn": "Vietnam",
+    "my": "Malaysia", "th": "Thailand", "ae": "UAE", "sa": "Saudi Arabia", "qa": "Qatar", "eg": "Egypt",
+    "ng": "Nigeria", "ke": "Kenya", "za": "South Africa", "gh": "Ghana", "ma": "Morocco", "il": "Israel",
+    "tr": "Turkey", "de": "Germany", "fr": "France", "nl": "Netherlands", "es": "Spain", "it": "Italy",
+    "ie": "Ireland", "se": "Sweden", "pl": "Poland", "pt": "Portugal", "ch": "Switzerland", "at": "Austria",
+    "be": "Belgium", "dk": "Denmark", "fi": "Finland", "no": "Norway", "ee": "Estonia", "ua": "Ukraine",
+    "br": "Brazil", "mx": "Mexico", "ar": "Argentina", "co": "Colombia", "cl": "Chile",
 }
 
 _REGIONS = {
@@ -93,6 +105,8 @@ def short_country(c: str | None) -> str | None:
     if not c:
         return None
     c = c.strip().strip(".")
+    if len(c) == 2 and c.lower() in _ISO2:
+        return _ISO2[c.lower()]
     v = _COUNTRY_SHORT.get(c.lower(), c)
     return v or None
 
@@ -104,6 +118,21 @@ def region_of(country: str | None) -> str:
     if c in _EUROPE:
         return "Europe"
     return _REGIONS.get(c, "Other")
+
+
+REGION_LABELS = {"usa": "USA", "europe": "Europe", "china": "China", "india": "India", "pakistan": "Pakistan",
+                 "bangladesh": "Bangladesh", "sea": "SE Asia", "africa": "Africa", "mideast": "Middle East",
+                 "latam": "LatAm", "east asia": "East Asia"}
+
+
+def place_label(country: str | None, region: str | None = None) -> str:
+    """Where a startup is based, for cards and digest rows. Without a stated country, say which region's news
+    reported it (a hint, not a fact about the company)."""
+    c = short_country(country)
+    if c:
+        return c
+    label = REGION_LABELS.get((region or "").lower())
+    return f"{label} news" if label else "country unknown"
 
 
 def clean_url(url: str) -> str:

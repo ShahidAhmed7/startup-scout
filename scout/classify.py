@@ -17,6 +17,13 @@ def exact_ids(ids):
     return validate
 
 
+def hidden_listing(name) -> bool:
+    """TrustMRR 'Stealth Company' profiles hide what they sell: never treat them as a known product."""
+    import re
+
+    return bool(re.match(r"stealth(\s|$|-)", (name or "").strip().lower()))
+
+
 def classify(conn, ids):
     material = startup_material(conn, ids)
     cfg = effective(conn)
@@ -42,7 +49,7 @@ def classify(conn, ids):
     metadata = {
         r["id"]: r
         for r in conn.execute(
-            """select s.id,s.country,s.last_seen_at,
+            """select s.id,s.name,s.country,s.last_seen_at,
         (select src.region from startup_items si join items i on i.id=si.item_id join sources src on src.id=i.source_id
          where si.startup_id=s.id order by i.fetched_at,i.id limit 1) src_region from startups s where s.id=any(%s)""",
             (ids,),
@@ -63,6 +70,8 @@ def classify(conn, ids):
             d = obj.model_dump()
             sid = d["startup_id"]
             s = metadata[sid]
+            if hidden_listing(s["name"]):
+                d["product_known"] = False
             reg = region(s["country"], s["src_region"])
             conn.execute(
                 "update startups set classification_json=%s,region=%s,category=%s where id=%s",

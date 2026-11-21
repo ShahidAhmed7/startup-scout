@@ -245,7 +245,7 @@ def add_routes(app: FastAPI, connect) -> None:
 <select name="ambition">{opts(["", "lean", "seed", "venture"], ambition)}</select>
 <select name="business_model">{opts(["", "software_subscription", "marketplace", "financial_product", "commerce", "tech_enabled_service", "hardware_light", "deep_tech", "infrastructure_api", "media_content", "other"], business_model)}</select>
 <input type="submit" value="Filter"></form>"""
-        from scout.score import verdict, half_up
+        from scout.score import shown_verdict as verdict, half_up
 
         trs = "".join(
             f"""<tr><td>{r["run_date"]}</td><td><a href="/archive/card/{r["id"]}">{e(r["name"])}</a></td>

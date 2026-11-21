@@ -135,8 +135,15 @@ def check(conn, since) -> int:
                from ideas i join startups s on s.id = i.startup_id
                join lateral (select scores_json from scores where startup_id = s.id order by created_at desc limit 1) sc on true
                where i.status <> 'dropped'""").fetchall():
-        now = {"bangladesh": r["j"]["bangladesh"], "global": r["j"]["global"]}
-        if r["last_scores"] and r["last_scores"] != now:
+        # Compare the whole-number scores the owner sees; a switch to the redesigned scale only resets the baseline.
+        from scout.score import half_up
+
+        version = r["j"].get("schema_version", 1)
+        now = {"bangladesh": half_up(r["j"]["bangladesh"]), "global": half_up(r["j"]["global"]),
+               "schema_version": version}
+        last = r["last_scores"] or {}
+        if last and last.get("schema_version", 1) == version and \
+                (last["bangladesh"], last["global"]) != (now["bangladesh"], now["global"]):
             msg = (f"*Saved idea update: {r['name']}*\nScores changed: Bangladesh {r['last_scores']['bangladesh']} → "
                    f"{now['bangladesh']}, Global {r['last_scores']['global']} → {now['global']}.")
             outbox.deliver(conn, [buttons_payload("", msg, [(f"card:{r['card_id']}", "Open card")])]

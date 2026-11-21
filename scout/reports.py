@@ -149,7 +149,9 @@ def friday(conn) -> dict:
                 rows.append(
                     {
                         "id": f"card:{c['id']}",
-                        "title": row_title(p["name"], f"G {p['j']['global']}"),
+                        "title": row_title(
+                            p["name"], f"Global {half_up(p['j']['global'])}"
+                        ),
                         "description": clip(p["description"] or "", 72),
                     }
                 )
@@ -349,8 +351,8 @@ def monthly(conn) -> dict:
         ).fetchall()
         if ideas:
             lines += ["", "*Your saved ideas*"] + [
-                f"- {r['name']}: {r['status'].capitalize()}, BD {r['j']['bangladesh'] if r['j'] else '?'} · "
-                f"Global {r['j']['global'] if r['j'] else '?'}, {r['notes']} notes"
+                f"- {r['name']}: {r['status'].capitalize()}, BD {half_up(r['j']['bangladesh']) if r['j'] else 'unknown'} · "
+                f"Global {half_up(r['j']['global']) if r['j'] else 'unknown'}, {r['notes']} notes"
                 + (f", {r['at_risk']} assumptions at risk" if r["at_risk"] else "")
                 for r in ideas
             ]

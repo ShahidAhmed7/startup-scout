@@ -3,6 +3,7 @@
 from __future__ import annotations
 import copy
 import json
+import re
 from decimal import Decimal, ROUND_HALF_UP
 from collections import Counter
 from scout.llm import prompts, run as ai
@@ -74,6 +75,39 @@ def buzz(conn, sid: int) -> float:
     return row["n"] + row["pts"] / 100.0
 
 
+_METRIC = re.compile(
+    r"\b(users?|customers?|clients?|merchants?|sellers?|subscribers?|downloads?|installs?|orders?|revenue|arr|mrr|"
+    r"gmv|sales|run[- ]?rate|growth|grew|profit\w*|transactions?|members?|students?|patients?|bookings?|"
+    r"retention|paying|signups?|deployments?|partners?|stores?|outlets?|shipments?|deliveries|volume)\b|%",
+    re.I,
+)
+
+
+def traction_known(text) -> bool:
+    """Traction = stated numbers about users, customers, revenue or growth. A funding round is not traction."""
+    text = (text or "").strip()
+    return (
+        text.lower() not in ("", "unknown", "none")
+        and bool(re.search(r"\d", text))
+        and bool(_METRIC.search(text))
+    )
+
+
+DEMAND_ABROAD_MAX_WITHOUT_TRACTION = 7
+
+
+def evidence_rules(raw: dict) -> dict:
+    """Rubric rules the fast model tends to skip, enforced in code: funding is not traction, and without traction
+    numbers demand abroad cannot reach 8-10 (the round alone is only some evidence)."""
+    if not traction_known(raw.get("traction")):
+        raw["traction"] = "unknown"
+        dim = raw["global"]["demand_abroad"]
+        if dim["score"] > DEMAND_ABROAD_MAX_WITHOUT_TRACTION:
+            dim["score"] = DEMAND_ABROAD_MAX_WITHOUT_TRACTION
+            dim["reason"] = (dim["reason"].rstrip(". ") + " (at most 7 without traction numbers)").strip()
+    return raw
+
+
 def half_up(value):
     return int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
@@ -83,13 +117,23 @@ def verdict(value, cfg=None):
     for key, default in [("strong", 8), ("promising", 6.5), ("watch", 5)]:
         if value >= thresholds.get(key, default):
             return key.capitalize()
-    return "Below threshold"
+    return "Low"
+
+
+def product_known(classification) -> bool:
+    return bool(classification.get("product_known", False))
+
+
+def shown_verdict(value, cfg=None):
+    """The verdict word next to a shown whole-number score, so '8' always reads Strong and '6' always Watch.
+    Selection still uses the unrounded score (a pick needs 6.5, which is shown as 7)."""
+    return verdict(half_up(value), cfg)
 
 
 def calculate(data, classification, cfg=None):
     cfg = cfg or effective()
     d = copy.deepcopy(data)
-    known = classification.get("product_known", False)
+    known = product_known(classification)
     cap = cfg["scoring"]["unknown_product_max"]
     if not known:
         for group in ("bangladesh", "global"):
@@ -199,6 +243,7 @@ def score(conn, ids, run_date):
                 "score": 5,
                 "reason": "not checked yet",
             }
+            evidence_rules(raw)
             d, ranks = calculate(raw, c, cfg)
             conn.execute(
                 "insert into scores(startup_id,model_id,scores_json,reasons_json,ai_angle,confidence,run_date,category,skip,rank_bd,rank_global,concepts_json)\n                values(%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s,%s)",
