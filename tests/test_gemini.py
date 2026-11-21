@@ -66,8 +66,17 @@ def harness(monkeypatch):
                 ]
             )
 
+        async def stream(messages, info):
+            # streamed entries (the private model) get the same reply in chunks
+            response = await function(messages, info)
+            text = response.parts[0].content
+            for i in range(0, len(text), 8):
+                yield text[i : i + 8]
+
         return FunctionModel(
-            function, profile=ModelProfile(supports_json_schema_output=True)
+            function,
+            stream_function=stream,
+            profile=ModelProfile(supports_json_schema_output=True),
         )
 
     monkeypatch.setattr(registry, "get_model", get)

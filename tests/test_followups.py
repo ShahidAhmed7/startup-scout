@@ -43,15 +43,20 @@ def _run_private(monkeypatch, warm):
     guard._next.clear()
 
     async def reply(messages, info):
-        return ModelResponse(parts=[TextPart("ok")])
+        raise AssertionError("the private entry must stream (Modal cuts silent requests at 150 s)")
 
-    model = guard.GuardedModel("private", FunctionModel(reply), "private")
+    async def stream(messages, info):
+        for chunk in ("o", "k"):
+            yield chunk
+
+    model = guard.GuardedModel("private", FunctionModel(reply, stream_function=stream), "private")
     from pydantic_ai import Agent
 
     async def go():
         return await Agent(model).run("hello")
 
-    asyncio.run(go())
+    result = asyncio.run(go())
+    assert result.output == "ok"
     status, _, _, seconds, gpu, attempt = conn.updates[-1]
     return status, seconds, gpu, attempt, cfg
 
@@ -59,7 +64,7 @@ def _run_private(monkeypatch, warm):
 def test_cold_private_request_pays_cold_start(monkeypatch):
     status, seconds, gpu, attempt, cfg = _run_private(monkeypatch, warm=False)
     assert status == "ok" and attempt == 7
-    assert gpu == seconds + cfg["models"]["private"]["cold_start_seconds"] + 120
+    assert gpu == seconds + 120  # cold-start time is inside `seconds` (readiness wait); plus the idle tail
 
 
 def test_warm_private_request_pays_only_its_own_time(monkeypatch):

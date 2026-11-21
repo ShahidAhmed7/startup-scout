@@ -146,6 +146,7 @@ models:
     key_env: QWEN_API_KEY
     concurrency: 4
     budget_guard: true
+    stream: true
     settings:
       max_output_tokens: 16384
       timeout_s: 1200

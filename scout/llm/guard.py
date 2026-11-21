@@ -24,12 +24,36 @@ def transient(exc) -> bool:
 
     code = getattr(exc, "status_code", None)
     names = type(exc).__name__ + " " + type(exc.__cause__ or exc).__name__
+    from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+
     return (
         isinstance(exc, ModelUnavailableError)
         or code in (500, 502, 503, 504)
-        or "Timeout" in names
-        or "ConnectError" in names
+        # a dropped connection (no HTTP status), e.g. a proxy closing a silent request
+        or (isinstance(exc, ModelAPIError) and not isinstance(exc, ModelHTTPError) and code is None)
+        or any(n in names for n in ("Timeout", "ConnectError", "RemoteProtocolError", "ReadError"))
     )
+
+
+async def wait_until_ready(base_url: str, deadline_s: float) -> None:
+    """Wake a scale-to-zero server and wait for its unauthenticated /health check (no data is sent).
+    Modal holds each request up to 150 s while the container starts, so keep asking until the deadline."""
+    import httpx
+
+    if not base_url:
+        raise RuntimeError("Private endpoint is not configured")
+    url = base_url.rstrip("/").removesuffix("/v1") + "/health"
+    end = time.monotonic() + deadline_s
+    async with httpx.AsyncClient(timeout=160) as client:
+        while True:
+            try:
+                if (await client.get(url)).status_code == 200:
+                    return
+            except httpx.HTTPError:
+                pass
+            if time.monotonic() > end:
+                raise TimeoutError("Private model did not start in time")
+            await asyncio.sleep(5)
 
 
 def attempt_status(exc) -> str:
@@ -158,9 +182,26 @@ class GuardedModel(WrapperModel):
                 response = None
                 status = "server"
                 try:
-                    response = await self.wrapped.request(
-                        messages, model_settings, model_request_parameters
-                    )
+                    if cfg.get("budget_guard") and cfg.get("base_url_env"):
+                        from scout.config import env
+
+                        await wait_until_ready(
+                            env(cfg["base_url_env"]) or "",
+                            2 * cfg.get("cold_start_seconds", 480),
+                        )
+                    if cfg.get("stream"):
+                        # Modal closes a silent HTTP request after 150 s; streamed tokens keep long private
+                        # requests alive. The collected response is identical to a non-streamed one.
+                        async with self.wrapped.request_stream(
+                            messages, model_settings, model_request_parameters
+                        ) as stream:
+                            async for _ in stream:
+                                pass
+                        response = stream.get()
+                    else:
+                        response = await self.wrapped.request(
+                            messages, model_settings, model_request_parameters
+                        )
                     status = "ok"
                     return response
                 except Exception as exc:
@@ -178,9 +219,9 @@ class GuardedModel(WrapperModel):
                             and created_at > now() - make_interval(secs => %s) limit 1""",
                             (attempt, seconds + 300),
                         ).fetchone()
-                        gpu = seconds + (
-                            0 if warm else cfg.get("cold_start_seconds", 480) + 120
-                        )
+                        # The measured time already includes any cold start (the readiness wait runs inside
+                        # it); the first request of a burst also pays the idle tail before scale-down.
+                        gpu = seconds + (0 if warm else cfg.get("scaledown_seconds", 120))
                     conn.execute(
                         """update usage set status=%s,tokens_in=%s,tokens_out=%s,seconds=%s,gpu_seconds=%s
                         where id=%s""",

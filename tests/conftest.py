@@ -14,3 +14,12 @@ def safe_env(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY_MAIN", "main-key")
     monkeypatch.setenv("GEMINI_API_KEY_BACKUP", "backup-key")
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("QWEN_BASE_URL", raising=False)
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
+    # Unit tests must never wake the real GPU: the readiness check is a no-op here.
+    from scout.llm import guard
+
+    async def ready(base_url, deadline_s):
+        return None
+
+    monkeypatch.setattr(guard, "wait_until_ready", ready)
