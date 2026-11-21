@@ -23,7 +23,7 @@
 
 > [!IMPORTANT]
 > **Every funding round is a signal.** An investor has just validated that a problem is real and worth paying to solve.
-> Startup Scout captures those signals from around the world, filters out what a small team can't build, and turns
+> Startup Scout captures those signals from around the world, filters excluded industries and balances the scoring pool, and turns
 > the rest into concrete opportunities for the Bangladeshi market and for selling globally from Bangladesh.
 
 ## Why it matters
@@ -46,7 +46,7 @@
 
 ### Decide
 <table>
-<tr><td width="50%" valign="top"><b>Opportunity cards</b><br>A concise brief for every pick: what the company does, why investors backed it, the Bangladesh version, the global angle, the AI angle and a one-week test plan.</td><td width="50%" valign="top"><b>Dual-market scoring</b><br>Every startup is scored for the Bangladeshi market and for global sales from Bangladesh: pain, timing, feasibility, cost to start and fit with your skills.</td></tr>
+<tr><td width="50%" valign="top"><b>Opportunity cards</b><br>A concise brief for every pick: what the company does, why investors backed it, the Bangladesh version, the global angle, the AI angle and what it takes to launch. Save, Skip and More are attached to the short card; More opens the evidence, score reasons and a 30-day validation plan.</td><td width="50%" valign="top"><b>Dual-market scoring</b><br>Every startup is scored for the Bangladeshi market and for global sales from Bangladesh: demand, adoption readiness, competition, regulation, economics, remote delivery, cost advantage and trust. Code computes weighted market scores. Capital, build type, team size and licence route are shown separately.</td></tr>
 <tr><td width="50%" valign="top"><b>On-demand deep dives</b><br>Local competitors, comparable startups that failed and why, a revenue model with pricing in taka, key risks and a first-week plan.</td><td width="50%" valign="top"><b>Verified facts only</b><br>Every name and figure is checked against the sources the system actually read. Anything unverified is removed or marked unknown.</td></tr>
 </table>
 
@@ -62,6 +62,16 @@
 <tr><td width="50%" valign="top"><b>Private web archive</b><br>A secure, searchable archive of every card with filters, plus a board view of your notebook. Sign in from your phone with one tap.</td><td width="50%" valign="top"><b>Built for reliability</b><br>Multiple AI models back each other up, including a self-hosted fallback, with budget controls that keep it on free tiers.</td></tr>
 </table>
 
+
+## Opportunity scoring
+
+The pool is balanced before scoring: the US is capped at 35%, Europe at 15%, China at 10%, and Bangladesh plus similar markets target at least 40%. Regional caps can relax when other regions run out; shortages are recorded. AI-first startups are capped at 40% of the scored pool and 3 across picks and explore rows.
+
+Bangladesh and global scores use separate market dimensions, with no technology or founder-profile bonus. **Strong** starts at 8, **Promising** at 6.5 and **Watch** at 5. Shown scores round half up. The digest normally has up to 3 Bangladesh and 2 global picks. On a slow day, Watch ideas fill it to at least 3 when eligible candidates exist. At least 1 eligible pick comes from outside the US.
+
+Effort is labelled separately: build type, capital (bootstrap, seed or venture), team size, licence route and time to revenue. Use `ambition any|lean|seed|venture` to filter the capital range. Unknown products are never shown.
+
+All providers, keys, settings and fallback groups are configured in `config.yaml` and run through Pydantic AI. Both Google keys work in parallel. Private notes stay on the authenticated self-hosted endpoint. `--dev` selects Flash-Lite only, preserving stronger-model quota.
 
 ## Architecture
 
@@ -82,7 +92,7 @@ One serverless application on Modal runs the schedule, the daily pipeline, the W
   ┌────────────────────┐  spawns  ┌──────────────────────────────┐  calls   ┌───────────────────────────┐
   │ tick               ├─────────►│ pipeline                     ├─────────►│ AI providers              │
   │ scheduler          │          │ collect · extract · merge    │          │ Gemini 4 Hydrogen: judge  │
-  │ digest timing,     │          │ score · shortlist · research │          │ Gemini Flash-Lite: read   │
+  │ digest timing,     │          │ score · shortlist · research │          │ Gemini Flash-Lite: classify   │
   │ reports, budget    │          │ cards · fact gate · digest   │          │ Gemma 4: fallback         │
   └─────────┬──────────┘          └──────────────┬───────────────┘          └─────────────┬─────────────┘
             │                                    │ reads / writes                         │ last resort
@@ -129,12 +139,12 @@ Every stage is automated; AI is used only where judgement is needed, and two saf
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ SCORE        Hydrogen scores every startup twice: Bangladesh and     │
+  │ SCORE        dimension scores become 2 market scores: Bangladesh and     │
   │              global · hard rubric caps · skip list · taste nudge     │
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ SHORTLIST    minimum score and feasibility · one pick per sector ·   │
+  │ SHORTLIST    Promising scores; Watch fills to 3 · diverse sectors ·   │
   │              cap on AI-first picks · thin-information penalty        │
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
@@ -270,14 +280,14 @@ cp .env.example .env                      # add your credentials
 .venv/bin/python -m scout.status          # verify the setup
 ```
 
-Preview a full run without sending any messages:
+Preview a full run without sending messages or retaining pipeline changes (usage accounting remains):
 
 ```bash
 .venv/bin/python -m scout.run --dry --dev
 ```
 
 > [!TIP]
-> Customise the target market, skills, excluded industries and scoring weights in `config.yaml`, and the news
+> Customise ambition, excluded industries, model routing and dimensional scoring weights in `config.yaml`, and the news
 > sources in `sources.yaml`.
 
 ## License
