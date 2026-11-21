@@ -1,15 +1,14 @@
-"""The "More" button: a deep dive on one card (Hydrogen). Competitors and failures only from search results."""
-from __future__ import annotations
+"""Full analysis, sourced research and a 30-day validation plan behind More."""
 
 import json
-
-from scout.llm import prompts, router
+from scout.llm import prompts, run as ai
 from scout.search import format_results, web_search
-from scout.whatsapp.formats import LIMITS, clip, numbered_lines
+from scout.cards import full_analysis, fact_gate
 
 
-def _dedupe(results: list[dict]) -> list[dict]:
-    seen, out = set(), []
+def _dedupe(results):
+    seen = set()
+    out = []
     for r in results:
         if r["url"] not in seen:
             seen.add(r["url"])
@@ -17,45 +16,82 @@ def _dedupe(results: list[dict]) -> list[dict]:
     return out
 
 
-def deep_dive(conn, card_id: int) -> tuple[str, int]:
-    """Returns (text, deep_dive_card_id). Reuses a deep dive made in the last 7 days."""
-    card = conn.execute("select * from cards where id = %s", (card_id,)).fetchone()
-    if card is None:
-        raise ValueError("card not found")
+def deep_dive(conn, card_id):
+    card = conn.execute("select * from cards where id=%s", (card_id,)).fetchone()
+    if not card:
+        raise ValueError("Card not found")
     old = conn.execute(
-        """select id, body from cards where startup_id = %s and kind = 'deep_dive'
-           and created_at > now() - interval '7 days' order by id desc limit 1""", (card["startup_id"],)).fetchone()
+        """select id,body from cards where kind='deep_dive' and data_json->>'parent_card_id'=%s
+        and created_at>now()-interval '7 days' order by id desc limit 1""",
+        (str(card_id),),
+    ).fetchone()
     if old:
         return old["body"], old["id"]
-    s = conn.execute("select * from startups where id = %s", (card["startup_id"],)).fetchone()
-    research = (card["data_json"] or {}).get("research", {})
-    phrase = research.get("phrase") or s["category"] or s["name"]
-    search_bd = _dedupe(research.get("search_bd", []) + web_search(conn, f"{phrase} company Bangladesh"))[:10]
-    search_fail = _dedupe(web_search(conn, f"{phrase} startup shut down") + research.get("search_fail", []))[:8]
-    out = router.complete("deep_dive", prompts.deep_dive_prompt({
-        "card": card["body"][:3500], "search_bd": format_results(search_bd), "search_fail": format_results(search_fail)}),
-        schema=prompts.DEEP_SCHEMA, system=prompts.SYSTEM, conn=conn)
+    s = conn.execute(
+        "select * from startups where id=%s", (card["startup_id"],)
+    ).fetchone()
+    res = (card["data_json"] or {}).get("research", {})
+    phrase = res.get("phrase") or s["category"] or s["name"]
+    bd = _dedupe(
+        res.get("search_bd", []) + web_search(conn, f"{phrase} company Bangladesh")
+    )[:10]
+    fail = _dedupe(
+        res.get("search_fail", []) + web_search(conn, f"{phrase} startup shut down")
+    )[:8]
+    abroad = web_search(conn, f"{phrase} companies international")
+    out = ai.run(
+        "deep_dive",
+        prompts.deep_dive_prompt(
+            {
+                "card": full_analysis(card),
+                "search_bd": format_results(bd),
+                "search_fail": format_results(fail),
+                "search_abroad": format_results(abroad),
+            }
+        ),
+        prompts.DEEP_SCHEMA,
+        system=prompts.SYSTEM,
+        conn=conn,
+    )
     d = out.data
-    allowed = {r["url"] for r in search_bd + search_fail}
-    comps = [c for c in d.get("competitors", []) if c.get("url") in allowed and c.get("name")]
-    if not search_bd:
-        d["competitors_bd"] = "unknown (the web search returned nothing)"
-    sources = []
-    for u in [*d.get("source_urls", []), *[c["url"] for c in comps]]:
-        if u in allowed and u not in sources:
-            sources.append(u)
-    comp_txt = d["competitors_bd"] + ("\n" + "\n".join(f"- {c['name']}: {c['url']}" for c in comps[:5]) if comps else "")
-    sections = [("Competitors in Bangladesh", comp_txt), ("Failure check", d["failure_check"]),
-                ("How it could make money", d["how_it_makes_money"]), ("Risks", numbered_lines(d["risks"])),
-                ("First 7 days", numbered_lines(d["first_7_days"]))]
-    head = f"*{s['name']}: deep dive*"
-    src = "*Sources*\n" + ("\n".join(f"{i}. {u}" for i, u in enumerate(sources[:8], 1)) or "unknown")
-    text = head + "\n\n" + "\n\n".join(f"*{t}*\n{v or 'unknown'}" for t, v in sections) + "\n\n" + src + \
-        f"\n\n_Model: {out.model_id}_"
-    text = clip(text, LIMITS["text"])
+    allowed = {r["url"] for r in bd + fail + abroad}
+    d["competitors"] = [c for c in d["competitors"] if c["url"] in allowed]
+    d["source_urls"] = [u for u in d["source_urls"] if u in allowed]
+    material = full_analysis(card) + "\n" + format_results(bd + fail + abroad)
+    removed = []
+    for field in ("landscape", "failure_check"):
+        gated, flags = fact_gate(
+            {"what_they_do": d[field], "evidence": "unknown"}, material, s["name"], None
+        )
+        d[field] = gated["what_they_do"]
+        removed.extend(field + ": " + flag for flag in flags)
+    d["fact_gate_removed"] = removed
+    d["research"] = {"search_bd": bd, "search_fail": fail, "search_abroad": abroad}
+    text = full_analysis(card, d)
+    if (card["data_json"] or {}).get("schema_version") != 2:
+        text += "\n\n*Deep dive*\n" + "\n\n".join(
+            "\n".join(d[k]) if isinstance(d[k], list) else d[k]
+            for k in (
+                "landscape",
+                "failure_check",
+                "economics",
+                "regulatory_route",
+                "first_customers",
+                "validation_30_days",
+                "risks",
+            )
+        )
     did = conn.execute(
-        """insert into cards (startup_id, kind, body, source_urls, model_id, run_date, market, title, data_json)
-           values (%s, 'deep_dive', %s, %s, %s, current_date, %s, %s, %s) returning id""",
-        (s["id"], text, sources, out.model_id, card["market"], s["name"],
-         json.dumps(d | {"competitors": comps, "parent_card_id": card_id}))).fetchone()["id"]
+        """insert into cards(startup_id,kind,body,source_urls,model_id,run_date,market,title,data_json)
+        values(%s,'deep_dive',%s,%s,%s,current_date,%s,%s,%s) returning id""",
+        (
+            s["id"],
+            text,
+            d["source_urls"],
+            out.model_id,
+            card["market"],
+            s["name"],
+            json.dumps(d | {"parent_card_id": card_id}),
+        ),
+    ).fetchone()["id"]
     return text, did

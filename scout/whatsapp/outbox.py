@@ -5,6 +5,7 @@
 - The next time the owner writes anything, flush_pending() sends the pending digest(s) first, then the queue.
 Never uses templates.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,8 +26,12 @@ def window_open(conn) -> bool:
 def _send(conn, payload: dict, kind: str) -> str:
     payload = dict(payload, to=client.owner_number())
     wamid = client.send_payload(payload)
-    body = payload.get("text", {}).get("body") or json.dumps(payload.get("interactive", {}), ensure_ascii=False)
-    repo.log_message(conn, direction="out", wa_message_id=wamid, type_=kind, body=body[:4000])
+    body = payload.get("text", {}).get("body") or json.dumps(
+        payload.get("interactive", {}), ensure_ascii=False
+    )
+    repo.log_message(
+        conn, direction="out", wa_message_id=wamid, type_=kind, body=body[:4000]
+    )
     return wamid
 
 
@@ -43,7 +48,10 @@ def deliver(conn, payloads: list[dict], kind: str) -> bool:
         return True
     queue = owner_state(conn)["pending_queue_json"] or []
     queue.append({"kind": kind, "payloads": payloads})
-    conn.execute("update owner_state set pending_queue_json = %s where id = 1", (json.dumps(queue),))
+    conn.execute(
+        "update owner_state set pending_queue_json = %s where id = 1",
+        (json.dumps(queue),),
+    )
     return False
 
 
@@ -58,18 +66,28 @@ def send_digest(conn, digest_row: dict) -> None:
 
     send_now(conn, [digest_mod.payload("", digest_row["body_json"])], "digest")
     if not dry_run():  # a dry run sent nothing, so the digest is still waiting
-        conn.execute("update digests set status = 'sent', sent_at = now() where id = %s", (digest_row["id"],))
+        conn.execute(
+            "update digests set status = 'sent', sent_at = now() where id = %s",
+            (digest_row["id"],),
+        )
 
 
 def flush_pending(conn) -> int:
     """Called when the owner writes. Sends pending digests first, then queued messages. Returns count."""
     n = 0
-    for d in conn.execute("select * from digests where status = 'pending' order by date").fetchall():
+    for d in conn.execute(
+        "select * from digests where status = 'pending' order by date"
+    ).fetchall():
         send_digest(conn, d)
         n += 1
     queue = owner_state(conn)["pending_queue_json"] or []
     if queue:
-        conn.execute("update owner_state set pending_queue_json = '[]' where id = 1")
+        from scout.config import dry_run
+
+        if not dry_run():
+            conn.execute(
+                "update owner_state set pending_queue_json = '[]' where id = 1"
+            )
         for entry in queue:
             send_now(conn, entry["payloads"], entry["kind"])
             n += 1

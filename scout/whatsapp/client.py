@@ -6,6 +6,7 @@ Callers must check the 24-hour window (window.py) before sending.
 
 DRY_RUN=1 prints every outgoing message instead of sending it.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,11 +49,14 @@ def _post(payload: dict, http: httpx.Client | None = None) -> str:
     if payload.get("type") == "template":
         raise ValueError("Template messages cost money and are never sent.")
     if dry_run():
-        print("[DRY_RUN] WhatsApp message:\n" + json.dumps(payload, ensure_ascii=False, indent=2))
+        print(
+            "[DRY_RUN] WhatsApp message:\n"
+            + json.dumps(dict(payload, to="[owner]"), ensure_ascii=False, indent=2)
+        )
         return f"dry-{uuid.uuid4().hex[:12]}"
     url = _api_url(f"{require_env('WHATSAPP_PHONE_NUMBER_ID')}/messages")
     headers = {"Authorization": f"Bearer {require_env('WHATSAPP_TOKEN')}"}
-    with (http or httpx.Client()) as c:
+    with http or httpx.Client() as c:
         r = c.post(url, headers=headers, json=payload, timeout=20)
     if r.status_code >= 400:
         try:
@@ -82,9 +86,13 @@ def send_text(body: str, http: httpx.Client | None = None) -> str:
 def check_phone(http: httpx.Client | None = None) -> dict:
     """Free read-only check that the token works. Sends nothing."""
     url = _api_url(require_env("WHATSAPP_PHONE_NUMBER_ID"))
-    with (http or httpx.Client()) as c:
-        r = c.get(url, params={"fields": "display_phone_number,verified_name,quality_rating"},
-                  headers={"Authorization": f"Bearer {require_env('WHATSAPP_TOKEN')}"}, timeout=20)
+    with http or httpx.Client() as c:
+        r = c.get(
+            url,
+            params={"fields": "display_phone_number,verified_name,quality_rating"},
+            headers={"Authorization": f"Bearer {require_env('WHATSAPP_TOKEN')}"},
+            timeout=20,
+        )
     if r.status_code >= 400:
         raise WhatsAppError(r.status_code, r.json().get("error", {}).get("message", ""))
     return r.json()

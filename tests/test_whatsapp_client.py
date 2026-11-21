@@ -9,22 +9,42 @@ def test_dry_run_prints_and_does_not_send(capsys):
     wamid = client.send_text("hello")
     out = capsys.readouterr().out
     assert wamid.startswith("dry-")
-    assert "[DRY_RUN]" in out and FAKE_OWNER in out and "hello" in out
+    assert (
+        "[DRY_RUN]" in out
+        and FAKE_OWNER not in out
+        and "[owner]" in out
+        and "hello" in out
+    )
 
 
 def test_refuses_any_number_but_the_owner():
-    payload = {"messaging_product": "whatsapp", "to": "8801999999999", "type": "text", "text": {"body": "x"}}
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": "8801999999999",
+        "type": "text",
+        "text": {"body": "x"},
+    }
     with pytest.raises(client.NotOwnerError):
         client._post(payload)
 
 
 def test_owner_number_formats_are_normalised():
-    payload = {"messaging_product": "whatsapp", "to": "+880 1700-000000", "type": "text", "text": {"body": "x"}}
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": "+880 1700-000000",
+        "type": "text",
+        "text": {"body": "x"},
+    }
     assert client._post(payload).startswith("dry-")
 
 
 def test_templates_are_never_sent():
-    payload = {"messaging_product": "whatsapp", "to": FAKE_OWNER, "type": "template", "template": {}}
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": FAKE_OWNER,
+        "type": "template",
+        "template": {},
+    }
     with pytest.raises(ValueError):
         client._post(payload)
 
@@ -44,7 +64,9 @@ def test_real_send_uses_owner_and_returns_id(monkeypatch):
         seen["body"] = request.content.decode()
         return httpx.Response(200, json={"messages": [{"id": "wamid.ABC"}]})
 
-    wamid = client.send_text("hi", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    wamid = client.send_text(
+        "hi", http=httpx.Client(transport=httpx.MockTransport(handler))
+    )
     assert wamid == "wamid.ABC"
     assert seen["url"].endswith("/123/messages")
     assert seen["auth"] == "Bearer test-token"
@@ -55,8 +77,12 @@ def test_api_error_is_raised(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "0")
 
     def handler(request):
-        return httpx.Response(400, json={"error": {"code": 131047, "message": "Re-engagement message"}})
+        return httpx.Response(
+            400, json={"error": {"code": 131047, "message": "Re-engagement message"}}
+        )
 
     with pytest.raises(client.WhatsAppError) as e:
-        client.send_text("hi", http=httpx.Client(transport=httpx.MockTransport(handler)))
+        client.send_text(
+            "hi", http=httpx.Client(transport=httpx.MockTransport(handler))
+        )
     assert e.value.code == 131047
