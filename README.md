@@ -46,7 +46,7 @@
 
 ### Decide
 <table>
-<tr><td width="50%" valign="top"><b>Opportunity cards</b><br>A concise brief for every pick: what the company does, why investors backed it, the Bangladesh version, the global angle, the AI angle and what it takes to launch. Save, Skip and More are attached to the short card; More opens the evidence, score reasons and a 30-day validation plan.</td><td width="50%" valign="top"><b>Dual-market scoring</b><br>Every startup is scored for the Bangladeshi market and for global sales from Bangladesh: demand, adoption readiness, competition, regulation, economics, remote delivery, cost advantage and trust. Code computes weighted market scores. Capital, build type, team size and licence route are shown separately.</td></tr>
+<tr><td width="50%" valign="top"><b>Opportunity cards</b><br>A concise brief for every pick: what the company does, why investors backed it, the Bangladesh version, the global angle, the AI angle and what it takes to launch. Save, Skip and More are attached to the short card; More opens the evidence, score reasons and a 30-day validation plan.</td><td width="50%" valign="top"><b>Three-track scoring</b><br>Every startup is scored for the Bangladeshi market, for global sales from Bangladesh, and as a service business run from Bangladesh: demand, adoption readiness, competition, regulation, economics, remote delivery, cost advantage, trust, reachability and repeatable revenue. Code computes weighted market scores. Capital, build type, team size and licence route are shown separately.</td></tr>
 <tr><td width="50%" valign="top"><b>On-demand deep dives</b><br>Local competitors, comparable startups that failed and why, a revenue model with pricing in taka, key risks and a first-week plan.</td><td width="50%" valign="top"><b>Verified facts only</b><br>Every name and figure is checked against the sources the system actually read. Anything unverified is removed or marked unknown.</td></tr>
 </table>
 
@@ -65,9 +65,9 @@
 
 ## Opportunity scoring
 
-Every candidate is first classified cheaply with Flash-Lite (region, sector, AI-first, whether the product is known). The pool is then balanced before scoring: the US is capped at 35%, Europe at 15%, China at 10%, and Bangladesh plus similar markets target at least 40%. Regional caps can relax when other regions run out; shortages are recorded. AI-first startups are capped at 40% of the scored pool and 3 across picks and explore rows.
+Every candidate is first classified cheaply with Flash-Lite (region, sector, AI-first, whether the product is known). The pool is then balanced before scoring: the US is capped at 35%, Europe at 15%, China at 10%, and Bangladesh plus similar markets target at least 40%. Regional caps can relax when other regions run out; shortages are recorded. AI-first startups are capped at 40% of the scored pool and 4 across picks and explore rows.
 
-Bangladesh and global scores use separate market dimensions, with no technology or founder-profile bonus. **Strong** starts at 8, **Promising** at 6.5 and **Watch** at 5; anything lower is **Low**. When a market has no sensible version, the card says so instead of listing scores. Shown scores round half up, and the verdict word always matches the number shown (7 is Promising, 8 is Strong). A funding round is evidence of demand, not traction: without stated users, customers or revenue, demand abroad stays at 7 or below. The digest normally has up to 3 Bangladesh and 2 global picks. On a slow day, Watch ideas fill it to at least 3 when eligible candidates exist. At least 1 eligible pick comes from outside the US.
+Every startup is scored on three tracks, each with its own dimensions and no technology or founder-profile bonus: **Bangladesh** (a local version), **global** (a product sold abroad from Bangladesh) and **service** (done-for-you work for clients, delivered through software by a team in Bangladesh, in any industry). The service track weighs how many clients have the need, whether they already pay for it, Bangladesh's cost edge, whether buyers can be reached remotely, and whether it is the same job every month for many clients; work that cannot be delivered online through software has no service version. **Strong** starts at 8, **Promising** at 6.5 and **Watch** at 5; anything lower is **Low**. When a market has no sensible version, the card says so instead of listing scores. Shown scores round half up, and the verdict word always matches the number shown (7 is Promising, 8 is Strong). A funding round is evidence of demand, not traction: without stated users, customers or revenue, demand abroad stays at 7 or below. The digest has 6 picks: 2 per track (change with `mix 2+2+2`). Tracks take turns picking; each pick in a track comes from a different sector, and a sector appears at most twice per digest. On a slow day, Watch ideas fill each track first, then any track up to 6. At least 1 eligible pick comes from outside the US.
 
 Effort is labelled separately: build type, capital (bootstrap, seed or venture), team size, licence route and time to revenue. Use `ambition any|lean|seed|venture` to filter the capital range. Unknown products are never shown, including hidden "stealth" listings and vague labels such as "a digital product". Cards and digest rows share one place label: the country when known, otherwise the news source's region (for example "India news") or "country unknown".
 
@@ -149,14 +149,14 @@ Every stage is automated; AI is used only where judgement is needed, and two saf
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ SCORE        Hydrogen rates market dimensions; code weights them     │
-  │              into Bangladesh and global scores · evidence rules ·    │
+  │ SCORE        Hydrogen rates dimensions; code weights them into       │
+  │              Bangladesh, global and service scores · evidence rules ·│
   │              taste nudge                                             │
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ SHORTLIST    Promising first, Watch fills to 3 · different sectors · │
-  │              AI-first cap · a pick from outside the US · novelty     │
+  │ SHORTLIST    2 Bangladesh · 2 global · 2 service, tracks take turns  │
+  │              Watch fills slow days · sectors · AI-first cap · novelty│
   └───────────────────────────────────┬──────────────────────────────────┘
                                       ▼
   ┌──────────────────────────────────────────────────────────────────────┐

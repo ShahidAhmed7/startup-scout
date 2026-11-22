@@ -14,6 +14,7 @@ def data(score=7):
         "startup_id": 1,
         "concept_bd": "A local delivery service for retailers.",
         "concept_global": "A remote operations service.",
+        "concept_service": "Done-for-you order processing for online retailers abroad.",
         "bangladesh": {
             k: dim()
             for k in (
@@ -34,6 +35,19 @@ def data(score=7):
                 "competition_gap",
             )
         },
+        "service": {
+            k: dim()
+            for k in (
+                "buyer_breadth",
+                "pain_budget",
+                "cost_advantage",
+                "reachability",
+                "repeatable_revenue",
+                "remote_delivery",
+                "trust_burden",
+                "competition_gap",
+            )
+        },
         "timing": dim(),
         "traction": "unknown",
         "investor_signal": "unknown",
@@ -43,6 +57,13 @@ def data(score=7):
             "team": "15+",
             "licence": "Licensed partner needed",
             "time_to_revenue": "over 12 months",
+        },
+        "service_what_it_takes": {
+            "build_type": "tech_enabled_service",
+            "capital": "bootstrap",
+            "team": "2-5",
+            "licence": "none",
+            "time_to_revenue": "under 3 months",
         },
         "ai_angle": "",
         "confidence": "medium",
@@ -202,7 +223,7 @@ def test_digest_uses_real_watch_fill_count_and_zero_message():
     from scout.digest import body_text
 
     body = body_text(20, 2, {"chips": 2}, 3, [], fill=1)
-    assert "Slow day: 1 of these are Watch picks" in body
+    assert "Slow day: 1 of these is a Watch pick" in body
     assert "No startup scored 5 or more today" in body_text(2, 0, {}, 0, [])
     assert "Only 2 startups scored 5 or more today" in body_text(2, 0, {}, 2, [])
 
@@ -279,7 +300,8 @@ def test_after_research_reselects_candidates_and_marks_drops(
         raw = data()
         raw["startup_id"] = sid
         j, _ = calculate(raw, CL)
-        j.update({"bangladesh": bd, "global": gl})
+        # This mechanism test is about the two original tracks.
+        j.update({"bangladesh": bd, "global": gl, "service": None})
         return {
             "id": sid,
             "startup_id": sid,
@@ -325,6 +347,8 @@ def test_after_research_reselects_candidates_and_marks_drops(
     monkeypatch.setattr(cm, "card_text", lambda *a: "rendered")
     cfg = deepcopy(config())
     cfg["diversity"]["explore_rows"] = 0
+    cfg["digest_mix"] = {"bangladesh": 3, "global": 2}
+    cfg["min_picks"] = 3
     final, swaps, failed, explore = _check_and_swap(
         Conn(),
         {"card_ids": [1, 2, 3], "failed": []},

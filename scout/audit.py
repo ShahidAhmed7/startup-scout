@@ -54,6 +54,7 @@ GENERIC = {
 def code_checks(conn, day):
     from collections import Counter
     from scout.score import todays_rows, shortlist
+    from scout.markets import MARKETS, SHORT
     from scout.pool import SIMILAR
 
     cfg = effective(conn)
@@ -68,7 +69,7 @@ def code_checks(conn, day):
         j = r["scores_json"]
         if not j.get("product_known"):
             if (
-                max(j["bangladesh"], j["global"])
+                max(j.get(m) or 0 for m in MARKETS)
                 > cfg["scoring"]["unknown_product_max"]
             ):
                 issues.append(r["name"] + ": unknown product score exceeds cap")
@@ -124,7 +125,11 @@ def code_checks(conn, day):
         # Only the explicitly marked minimum-pick fills may relax these constraints.
         strict = [j for c, d, j in picks if not d.get("diversity_relaxed")]
         sectors = Counter(j.get("sector") for j in strict)
-        if cfg["diversity"]["one_per_sector"] and any(n > 1 for n in sectors.values()):
+        per_track = Counter((d.get("market"), j.get("sector")) for c, d, j in picks if not d.get("diversity_relaxed"))
+        if cfg["diversity"]["one_per_sector"] and (
+            any(n > 1 for n in per_track.values())
+            or any(n > cfg["diversity"].get("max_same_sector", 2) for n in sectors.values())
+        ):
             pick_issues.append("sector repeated without fill exception")
         models = Counter(j.get("business_model") for j in strict)
         if any(
@@ -136,9 +141,9 @@ def code_checks(conn, day):
         for c, d, j in picks:
             for r in eligible:
                 if r["startup_id"] == c["startup_id"]:
-                    r.update(bd=j["bangladesh"], gl=j["global"])
+                    r.update({SHORT[m]: j[m] for m in MARKETS if j.get(m) is not None})
         expected = shortlist(eligible, cfg["digest_mix"], cfg["min_score"], cfg=cfg)
-        expected_picks = expected["bangladesh"] + expected["global"]
+        expected_picks = [r for m in MARKETS for r in expected[m]]
         if len(picks) < min(cfg["min_picks"], len(expected_picks)):
             pick_issues.append(
                 "fewer than minimum eligible picks (check card failures and swap limit)"
@@ -177,7 +182,7 @@ def code_checks(conn, day):
             r["name"]
             for r in rows
             if not r["scores_json"].get("product_known")
-            and max(r["scores_json"][m] for m in ("bangladesh", "global")) >= 5
+            and max(r["scores_json"].get(m) or 0 for m in MARKETS) >= 5
         ],
         "pick_issues": pick_issues,
         "pool_issues": pool_issues,

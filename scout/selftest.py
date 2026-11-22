@@ -40,6 +40,7 @@ def variety_report(rows, picks):
             k: {
                 "bd": round(sum(r["bd"] for r in v) / len(v), 2),
                 "global": round(sum(r["gl"] for r in v) / len(v), 2),
+                "service": round(sum(r.get("sv") or 0 for r in v) / len(v), 2),
             }
             for k, v in sectors.items()
         }
@@ -80,7 +81,7 @@ def variety(conn, dev=True, full=False):
         rows = todays_rows(conn, TEST_DATE)
         cfg = effective(conn)
         sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], cfg=cfg)
-        report = variety_report(rows, sl["bangladesh"] + sl["global"])
+        report = variety_report(rows, [r for m in ("bangladesh", "global", "service") for r in sl[m]])
         print(json.dumps(report, indent=2))
         evidence = {
             name: conn.execute(sql, (TEST_DATE,)).fetchall()

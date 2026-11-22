@@ -205,7 +205,7 @@ def fetch_yc(client, limiter, src, since, state, conn=None) -> FetchResult:
     return FetchResult(items)
 
 
-TRUSTMRR_MAX_PER_DAY = 20
+TRUSTMRR_MAX_PER_DAY = 40  # raised from 20 with the service track (2026-11-22)
 TRUSTMRR_MIN_30D_USD = 300  # keep only startups with real traction
 
 

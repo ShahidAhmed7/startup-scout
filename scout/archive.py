@@ -186,7 +186,7 @@ def add_routes(app: FastAPI, connect) -> None:
                 "(s.name ilike %s or s.description ilike %s or c.body ilike %s)"
             )
             args += [f"%{q}%"] * 3
-        if market in ("bangladesh", "global"):
+        if market in ("bangladesh", "global", "service"):
             where.append("c.market = %s")
             args.append(market)
         if country:
@@ -197,7 +197,7 @@ def add_routes(app: FastAPI, connect) -> None:
             args.append(f"%{sector}%")
         if min_score:
             where.append(
-                "greatest((coalesce(c.data_json->'scores_snapshot',sc.scores_json)->>'bangladesh')::numeric, (coalesce(c.data_json->'scores_snapshot',sc.scores_json)->>'global')::numeric) >= %s"
+                "greatest((coalesce(c.data_json->'scores_snapshot',sc.scores_json)->>'bangladesh')::numeric, (coalesce(c.data_json->'scores_snapshot',sc.scores_json)->>'global')::numeric, (coalesce(c.data_json->'scores_snapshot',sc.scores_json)->>'service')::numeric) >= %s"
             )
             args.append(min_score)
         if status:
@@ -222,6 +222,7 @@ def add_routes(app: FastAPI, connect) -> None:
             rows = conn.execute(
                 f"""select c.id, c.run_date, c.market, c.model_id, s.name, s.country, s.category, i.status,
                       (coalesce(c.data_json->'scores_snapshot',sc.scores_json)->>'bangladesh')::numeric as bd, (coalesce(c.data_json->'scores_snapshot',sc.scores_json)->>'global')::numeric as gl,
+                      (coalesce(c.data_json->'scores_snapshot',sc.scores_json)->>'service')::numeric as sv,
                       coalesce(c.data_json->'scores_snapshot',sc.scores_json)->'what_it_takes'->>'build_type' as build_type,
                       coalesce(c.data_json->'scores_snapshot',sc.scores_json)->'what_it_takes'->>'capital' as capital
                     from cards c join startups s on s.id = c.startup_id
@@ -237,7 +238,7 @@ def add_routes(app: FastAPI, connect) -> None:
             for v in vals
         )
         form = f"""<form method="get"><input name="q" placeholder="Search" value="{e(q)}">
-<select name="market">{opts(["", "bangladesh", "global"], market)}</select>
+<select name="market">{opts(["", "bangladesh", "global", "service"], market)}</select>
 <input name="country" placeholder="Country" value="{e(country)}" size="10">
 <input name="sector" placeholder="Sector" value="{e(sector)}" size="10">
 <input name="min" type="number" min="0" max="10" step="0.1" placeholder="Min score" value="{min_score or ""}" style="width:90px">
@@ -250,13 +251,13 @@ def add_routes(app: FastAPI, connect) -> None:
         trs = "".join(
             f"""<tr><td>{r["run_date"]}</td><td><a href="/archive/card/{r["id"]}">{e(r["name"])}</a></td>
 <td>{e(r["market"] or "")}</td><td>{e(r["country"] or "")}</td><td>{e(r["category"] or "")}</td>
-<td class="n">{half_up(r["bd"]) if r["bd"] is not None else ""}</td><td class="n">{half_up(r["gl"]) if r["gl"] is not None else ""}</td>
-<td>{e(r.get("build_type") or "")}</td><td>{e(r.get("capital") or "")}</td><td>{verdict(float(r["bd"] if r["market"] == "bangladesh" else r["gl"])) if r["bd"] is not None and r["gl"] is not None else ""}</td><td>{e(r["status"] or "")}</td><td class="muted">{e(r["model_id"] or "")}</td></tr>"""
+<td class="n">{half_up(r["bd"]) if r["bd"] is not None else ""}</td><td class="n">{half_up(r["gl"]) if r["gl"] is not None else ""}</td><td class="n">{half_up(r["sv"]) if r.get("sv") is not None else ""}</td>
+<td>{e(r.get("build_type") or "")}</td><td>{e(r.get("capital") or "")}</td><td>{verdict(float(shown)) if (shown := {"bangladesh": r["bd"], "global": r["gl"], "service": r.get("sv")}.get(r["market"] or "")) is not None else ""}</td><td>{e(r["status"] or "")}</td><td class="muted">{e(r["model_id"] or "")}</td></tr>"""
             for r in rows
         )
         table = (
             f'<div class="wrap"><table><tr><th>Date</th><th>Startup</th><th>Market</th><th>Country</th>'
-            f"<th>Sector</th><th>BD</th><th>Global</th><th>Build type</th><th>Capital</th><th>Verdict</th><th>Idea</th><th>Model</th></tr>{trs}</table></div>"
+            f"<th>Sector</th><th>BD</th><th>Global</th><th>Service</th><th>Build type</th><th>Capital</th><th>Verdict</th><th>Idea</th><th>Model</th></tr>{trs}</table></div>"
             if rows
             else "<p>No cards match.</p>"
         )

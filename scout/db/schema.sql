@@ -220,6 +220,7 @@ alter table scores   add column if not exists category text;
 alter table scores   add column if not exists skip boolean not null default false;
 alter table scores   add column if not exists rank_bd numeric;
 alter table scores   add column if not exists rank_global numeric;
+alter table scores   add column if not exists rank_service numeric;  -- service track (2026-11-22)
 alter table cards    add column if not exists run_date date;
 alter table cards    add column if not exists market text;            -- bangladesh | global
 alter table cards    add column if not exists title text;

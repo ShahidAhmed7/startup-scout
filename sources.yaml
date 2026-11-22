@@ -200,6 +200,14 @@ sources:
      url: 'startup raises ("seed round" OR "series a" OR "pre-seed") when:1d'}
   - {id: gnews_yc, name: "Google News: Y Combinator startups", kind: gnews, region: usa, role: funding, priority: high, status: active,
      url: '"Y Combinator" startup raises when:1d'}
+  # Service-first track (2026-11-22): funded companies that do the work for clients with AI and software
+  # ("full-stack AI" / "AI-native agency" in investors' words), in any industry.
+  - {id: gnews_ai_native_services, name: "Google News: AI-native service companies", kind: gnews, region: global, role: funding, priority: normal, status: active,
+     url: '"AI-native" (agency OR firm OR "services company") raises when:1d',
+     note: "Tested 2026-11-22: found Alecto (AI-native law firm, $20M seed) in a week's results."}
+  - {id: gnews_ai_powered_firms, name: "Google News: AI-powered service firms", kind: gnews, region: global, role: funding, priority: normal, status: active,
+     url: '("AI-powered" OR "AI-first" OR "tech-enabled") (agency OR firm OR "services company") (raises OR funding) when:1d',
+     note: "Tested 2026-11-22: found Count (AI accounting, $6.5M seed) and Cove (AI-first architecture firm roll-up). Noisy; extraction drops non-funding items."}
   - {id: gnews_india, name: "Google News: India", kind: gnews, region: india, role: funding, priority: normal, status: active,
      url: 'startup India (raises OR funding OR "seed round") when:1d'}
   - {id: gnews_pakistan, name: "Google News: Pakistan", kind: gnews, region: pakistan, role: funding, priority: normal, status: active,
@@ -218,7 +226,7 @@ sources:
   # ---------- Global track extras (phase 5) ----------
   - {id: trustmrr, name: "TrustMRR (verified revenue)", kind: trustmrr, region: global, role: funding, priority: normal, status: active,
      url: "https://trustmrr.com/recent",
-     note: "Recently added startups with payment-provider-verified revenue. robots.txt allows all; we read public .md pages, max 20/day."}
+     note: "Recently added startups with payment-provider-verified revenue. robots.txt allows all; we read public .md pages, max 40/day (raised from 20 for the service track, 2026-11-22)."}
   - {id: reddit_saas, name: "Reddit r/SaaS complaints", kind: rss, region: global, role: context, priority: normal, status: dead,
      url: "https://www.reddit.com/r/SaaS/new/.rss",
      note: "Reddit returns 404/429/empty feeds to unauthenticated readers, and Firecrawl does not support reddit.com (2026-11-19). Needs a free Reddit app registered by the owner."}

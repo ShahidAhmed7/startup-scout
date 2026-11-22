@@ -70,11 +70,14 @@ def test_bad_time_rejected(capture):
 
 def test_mix_command(capture):
     commands.handle(Conn(), text("mix 2+3"))
-    assert capture["settings"]["digest_mix"] == {"bangladesh": 2, "global": 3}
+    assert capture["settings"]["digest_mix"] == {"bangladesh": 2, "global": 3, "service": 0}
+    commands.handle(Conn(), text("mix 2+2+2"))
+    assert capture["settings"]["digest_mix"] == {"bangladesh": 2, "global": 2, "service": 2}
     commands.handle(Conn(), text("mix 8+5"))
     assert capture["settings"]["digest_mix"] == {
         "bangladesh": 2,
-        "global": 3,
+        "global": 2,
+        "service": 2,
     }  # over 10 rejected
 
 

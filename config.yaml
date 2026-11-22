@@ -3,13 +3,15 @@ timezone: Asia/Dhaka
 output_language: English
 digest_time: 08:00
 digest_mix:
-  bangladesh: 3
+  bangladesh: 2
   global: 2
+  service: 2
 min_score: 6.5
 diversity:
-  one_per_sector: true
-  max_ai_native: 3
-  max_same_business_model: 2
+  one_per_sector: true  # within each track
+  max_same_sector: 2  # across the whole digest
+  max_ai_native: 4
+  max_same_business_model: 3
   min_non_us_picks: 1
   novelty_days: 30
   novelty_similarity: 0.85
@@ -177,7 +179,7 @@ markets_like_ours:
 - Kenya
 - Egypt
 - Middle East
-min_picks: 3
+min_picks: 6
 fill_min_score: 5.0
 ambition: any
 scoring:
@@ -195,6 +197,17 @@ scoring:
     trust_burden: 0.8
     competition_gap: 0.8
     timing: 0.5
+  service:
+    buyer_breadth: 1.3
+    pain_budget: 1.2
+    cost_advantage: 1.0
+    reachability: 0.9
+    repeatable_revenue: 0.9
+    remote_delivery: 0.7
+    trust_burden: 0.7
+    competition_gap: 0.7
+    timing: 0.4
+  service_min_remote_delivery: 6
   evidence_bonus:
     traction_known: 0.3
     investor_known: 0.2

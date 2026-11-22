@@ -21,7 +21,7 @@ hi or digest: today's picks
 saved: your notebook
 settings: your settings
 time 7:30: change the digest time
-mix 2+3: Bangladesh + global picks
+mix 2+2+2: Bangladesh + global + service picks
 skip add crypto / skip remove space
 ambition lean|seed|venture|any
 ask <question>: about your last card or a saved idea
@@ -234,13 +234,13 @@ def settings_text(conn) -> None:
             [
                 "*Settings*",
                 f"Digest time: {cfg['digest_time']} (Dhaka)",
-                f"Mix: {mix['bangladesh']} Bangladesh + {mix['global']} global",
+                f"Mix: {mix.get('bangladesh', 0)} Bangladesh + {mix.get('global', 0)} global + {mix.get('service', 0)} service",
                 f"Minimum score: {cfg['min_score']}",
                 f"Skip list: {', '.join(cfg['skip_list']) or 'none'}",
                 f"Ambition: {cfg['ambition']}",
                 f"Reports: Friday {cfg['reports']['friday']}, monthly {cfg['reports']['monthly']}",
                 "",
-                "Change with: time 7:30 · mix 2+3 · skip add crypto · ambition lean",
+                "Change with: time 7:30 · mix 2+2+2 · skip add crypto · ambition lean",
             ]
         ),
     )
@@ -260,12 +260,12 @@ def set_time(conn, h: int, mnt: int, ampm: str | None) -> None:
     reply(conn, f"Done. Your digest now comes at {value} (Dhaka time).")
 
 
-def set_mix(conn, bd: int, gl: int) -> None:
-    if bd + gl < 1 or bd + gl > 10:
-        reply(conn, "The mix must add up to between 1 and 10, like mix 3+2.")
+def set_mix(conn, bd: int, gl: int, sv: int = 0) -> None:
+    if bd + gl + sv < 1 or bd + gl + sv > 10:
+        reply(conn, "The mix must add up to between 1 and 10, like mix 2+2+2.")
         return
-    set_value(conn, "digest_mix", {"bangladesh": bd, "global": gl})
-    reply(conn, f"Done. You'll get {bd} Bangladesh + {gl} global picks.")
+    set_value(conn, "digest_mix", {"bangladesh": bd, "global": gl, "service": sv})
+    reply(conn, f"Done. You'll get {bd} Bangladesh + {gl} global + {sv} service picks.")
 
 
 def edit_list(conn, key: str, action: str, value: str) -> None:
@@ -311,9 +311,9 @@ def explore_startup(conn, startup_id: int) -> None:
             reply(conn, "I can't find that startup any more.")
             return
         j = sc["scores_json"]
-        market = (
-            "bangladesh" if j.get("bangladesh", 0) >= j.get("global", 0) else "global"
-        )
+        from scout.markets import MARKETS
+
+        market = max(MARKETS, key=lambda m: j.get(m) or 0)
         reply(conn, "Writing this card. This takes a few minutes.")
         try:
             res = cards_mod.write_cards(
@@ -408,9 +408,9 @@ def handle(conn, msg: dict) -> None:
     if m:
         set_time(conn, int(m.group(1)), int(m.group(2) or 0), m.group(3))
         return
-    m = re.fullmatch(r"mix\s+(\d{1,2})\s*\+\s*(\d{1,2})", low)
+    m = re.fullmatch(r"mix\s+(\d{1,2})\s*\+\s*(\d{1,2})(?:\s*\+\s*(\d{1,2}))?", low)
     if m:
-        set_mix(conn, int(m.group(1)), int(m.group(2)))
+        set_mix(conn, int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
         return
     m = re.fullmatch(r"skip\s+(add|remove)\s+(.+)", text.strip(), re.I)
     if m:

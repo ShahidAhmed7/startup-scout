@@ -122,7 +122,7 @@ def apply(conn, run_date) -> dict:
         if r["startup_id"] not in embs:
             continue
         t = nudge(embs[r["startup_id"]], saved, skipped)
-        conn.execute("update scores set taste = %s, rank_bd = rank_bd + %s, rank_global = rank_global + %s "
-                     "where id = %s", (t, t, t, r["id"]))
+        conn.execute("update scores set taste = %s, rank_bd = rank_bd + %s, rank_global = rank_global + %s, "
+                     "rank_service = rank_service + %s where id = %s", (t, t, t, t, r["id"]))
         n += 1
     return {"applied": n, "signals": len(saved) + len(skipped)}

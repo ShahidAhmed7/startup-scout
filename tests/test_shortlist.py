@@ -32,7 +32,10 @@ def choose(rows, **kw):
 
 
 def picks(sl):
-    return sl["bangladesh"] + sl["global"]
+    return sl["bangladesh"] + sl["global"] + sl.get("service", [])
+
+
+OLD_MIX = {"bangladesh": 3, "global": 2}  # the two-track digest these mechanism tests were written for
 
 
 def test_slow_day_fills_to_three_with_real_watch_verdict():
@@ -83,14 +86,19 @@ def test_fill_relaxes_sector_and_model_only_when_needed():
         )
         for i in range(1, 5)
     ]
+    # A sector may appear once per track and twice per digest without relaxing: the second fintech fills the
+    # global track; only the third needs the relaxed rules.
+    sl = choose(rows, min_picks=3)
+    assert len(picks(sl)) == 3 and sum(r["diversity_relaxed"] for r in picks(sl)) == 1
     sl = choose(rows)
-    assert len(picks(sl)) == 3 and sum(r["diversity_relaxed"] for r in picks(sl)) == 2
+    assert len(picks(sl)) == 4 and sum(r["diversity_relaxed"] for r in picks(sl)) == 2
 
 
 def test_ai_maximum_covers_explore_not_quota():
     rows = [row(i, 8, 8, ai_native=i < 6, region="india") for i in range(1, 15)]
     sl = choose(rows)
-    assert sum(r["ai_native"] for r in picks(sl) + sl["explore"]) <= 3
+    cap = config()["diversity"]["max_ai_native"]
+    assert cap == 4 and sum(r["ai_native"] for r in picks(sl) + sl["explore"]) <= cap
     assert not any(
         r["ai_native"]
         for r in picks(choose([row(i, 8, 8, region="africa") for i in range(10)]))
@@ -170,7 +178,7 @@ def test_outside_us_normal_replacement_respects_other_diversity():
     rows = [row(i, 9 - i * 0.1, 8) for i in range(1, 7)] + [
         row(8, 8, 8, region="europe")
     ]
-    sl = choose(rows)
+    sl = choose(rows, digest_mix=OLD_MIX, min_picks=3)
     assert len(picks(sl)) == 5
     assert any(r["region"] == "europe" and not r["fill"] for r in picks(sl))
     assert len({r["startup_id"] for r in picks(sl)}) == 5

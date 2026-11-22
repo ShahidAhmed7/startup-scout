@@ -22,11 +22,9 @@ def _row(conn, cid: int, market: str) -> dict:
         (cid,),
     ).fetchone()
     sj = (c.get("data_json") or {}).get("scores_snapshot") or c["scores_json"] or {}
-    label = (
-        f"BD {half_up(sj.get('bangladesh', 0))}"
-        if market == "bangladesh"
-        else f"Global {half_up(sj.get('global', 0))}"
-    )
+    from scout.markets import ROW_LABEL
+
+    label = f"{ROW_LABEL[market]} {half_up(sj.get(market) or 0)}"
     round_txt = (
         " ".join(x for x in [c["stage"], c["amount_text"]] if x) or "round unknown"
     )
@@ -52,8 +50,10 @@ def _explore_row(conn, sid: int) -> dict:
         (sid,),
     ).fetchone()
     sj = c["scores_json"] or {}
-    bd, gl = sj.get("bangladesh", 0), sj.get("global", 0)
-    label = f"BD {half_up(bd)}" if bd >= gl else f"Global {half_up(gl)}"
+    from scout.markets import MARKETS, ROW_LABEL
+
+    best = max(MARKETS, key=lambda m: sj.get(m) or 0)
+    label = f"{ROW_LABEL[best]} {half_up(sj.get(best) or 0)}"
     round_txt = (
         " ".join(x for x in [c["stage"], c["amount_text"]] if x) or "round unknown"
     )
@@ -169,7 +169,7 @@ def body_text(
     if k and k < 3:
         body += f" Only {k} startups scored 5 or more today."
     if fill:
-        body += f" Slow day: {fill} of these are Watch picks (score 5-6)."
+        body += (f" Slow day: {fill} of these {'is a Watch pick' if fill == 1 else 'are Watch picks'} (score 5-6).")
     if world:
         body += "\n\n" + world
     if notes:
@@ -187,15 +187,11 @@ def build(
     explore: list[int] | None = None,
 ) -> dict:
     """picks: [(card_id, market)]. Stores/updates the digest for run_date as 'prepared' (unless already sent)."""
+    from scout.markets import MARKETS, SECTION
+
     sections = [
-        {
-            "title": "For Bangladesh",
-            "rows": [_row(conn, c, m) for c, m in picks if m == "bangladesh"],
-        },
-        {
-            "title": "Global from Bangladesh",
-            "rows": [_row(conn, c, m) for c, m in picks if m == "global"],
-        },
+        {"title": SECTION[mk], "rows": [_row(conn, c, m) for c, m in picks if m == mk]}
+        for mk in MARKETS
     ]
     room = 10 - sum(
         len(s["rows"]) for s in sections

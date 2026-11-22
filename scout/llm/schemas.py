@@ -94,6 +94,17 @@ class GlobalDims(BaseModel):
     competition_gap: Dim
 
 
+class ServiceDims(BaseModel):
+    buyer_breadth: Dim  # how many potential clients worldwide have this need (no prices needed)
+    pain_budget: Dim  # do they already pay people or tools to get this done
+    cost_advantage: Dim  # can a Bangladesh team do the work well for much less
+    reachability: Dim  # can a remote team find and contact the buyers
+    repeatable_revenue: Dim  # the same job every month for many clients, sold as a package
+    remote_delivery: Dim  # delivered entirely online through software (the gate)
+    trust_burden: Dim  # contracts, data rules, references needed
+    competition_gap: Dim  # room for a focused newcomer
+
+
 class WhatItTakes(BaseModel):
     build_type: Literal[
         "software",
@@ -116,12 +127,15 @@ class Scored(BaseModel):
     startup_id: int
     concept_bd: str  # the Bangladesh version in one sentence, or "none"
     concept_global: str  # the version sold abroad from Bangladesh, or "none"
+    concept_service: str  # done-for-you work for clients, delivered through software from Bangladesh, or "none"
     bangladesh: BangladeshDims
     global_: GlobalDims = Field(alias="global")  # model_config: populate_by_name=True
+    service: ServiceDims
     timing: Dim  # why now
     traction: str  # stated numbers, else "unknown"
     investor_signal: str  # named lead investors / accelerator, else "unknown"
     what_it_takes: WhatItTakes
+    service_what_it_takes: WhatItTakes  # the same labels for the service version
     ai_angle: str  # "" unless AI changes the economics
     confidence: Literal["high", "medium", "low"]
 
@@ -143,6 +157,7 @@ class Card(BaseModel):
     evidence: str  # fact: traction, investors, why funded; "unknown" if none
     bangladesh_play: str  # 2-4 sentences
     global_play: str  # 2-3 sentences, honest if weak
+    service_play: str  # 2-3 sentences, or "" if there is no service version
     main_risk: str  # 1 sentence
     already_here: str  # 1-2 sentences, from search results only
     competitors: list[Competitor]

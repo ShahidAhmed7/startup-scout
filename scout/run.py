@@ -17,6 +17,8 @@ from scout.pool import balance
 from scout.score import score, shortlist, todays_rows
 from scout.settings import effective
 
+from scout.markets import MARKETS, SHORT, CONCEPT
+
 DHAKA = ZoneInfo("Asia/Dhaka")
 
 
@@ -43,12 +45,12 @@ def _check_and_swap(conn, cr, picks, rows, run_date, new_round, cfg, max_swaps):
             from scout.score import rank_scores
 
             ranks = rank_scores(j, cfg)
-            old.update(
-                bd=j["bangladesh"],
-                gl=j["global"],
-                rank_bd=ranks["bangladesh"] + old.get("taste", 0),
-                rank_global=ranks["global"] + old.get("taste", 0),
-            )
+            from scout.markets import MARKETS, SHORT, RANK
+
+            for mk in MARKETS:
+                if j.get(mk) is not None:
+                    old[SHORT[mk]] = j[mk]
+                    old[RANK[mk]] = ranks[mk] + old.get("taste", 0)
             written[sid] = c
 
     ingest(cr)
@@ -59,7 +61,7 @@ def _check_and_swap(conn, cr, picks, rows, run_date, new_round, cfg, max_swaps):
             cfg["min_score"],
             cfg=cfg,
         )
-        wanted = sl["bangladesh"] + sl["global"]
+        wanted = [r for mk in MARKETS for r in sl[mk]]
         missing = [r for r in wanted if r["startup_id"] not in written]
         if not missing or turn == max_swaps:
             break
@@ -82,7 +84,7 @@ def _check_and_swap(conn, cr, picks, rows, run_date, new_round, cfg, max_swaps):
     )
     final = []
     kept = set()
-    for mk in ("bangladesh", "global"):
+    for mk in MARKETS:
         for row in final_sl[mk]:
             c = written[row["startup_id"]]
             d = c["data_json"]
@@ -93,9 +95,7 @@ def _check_and_swap(conn, cr, picks, rows, run_date, new_round, cfg, max_swaps):
                 diversity_relaxed=row["diversity_relaxed"],
             )
             if c["market"] != mk:
-                d["one_liner"] = d["scores_snapshot"][
-                    "concept_bd" if mk == "bangladesh" else "concept_global"
-                ]
+                d["one_liner"] = d["scores_snapshot"][CONCEPT[mk]]
             f = cards_mod.facts_for(conn, c["startup_id"])
             body = cards_mod.card_text(f, d, c["model_id"], today_dhaka())
             conn.execute(
@@ -108,7 +108,7 @@ def _check_and_swap(conn, cr, picks, rows, run_date, new_round, cfg, max_swaps):
                     "card_id": c["id"],
                     "market": mk,
                     "fill": row["fill"],
-                    "score": row["bd" if mk == "bangladesh" else "gl"],
+                    "score": row[SHORT[mk]],
                 }
             )
     for c in written.values():
@@ -210,7 +210,7 @@ def run_pipeline(
                 ),
             )
         sl = shortlist(rows, cfg["digest_mix"], cfg["min_score"], cfg=cfg)
-        picks = [(r, mk) for mk in ("bangladesh", "global") for r in sl[mk]]
+        picks = [(r, mk) for mk in MARKETS for r in sl[mk]]
         print(f"Writing {len(picks)} researched cards", flush=True)
         cr = cards_mod.write_cards(conn, picks, run_date, m["new_round"])
         final, swaps, failed, explore = _check_and_swap(

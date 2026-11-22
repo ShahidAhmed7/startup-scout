@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from scout.llm import prompts, run as ai
 from scout.search import format_results, homepage_text, web_search
 from scout.whatsapp.formats import LIMITS, clip, numbered_lines
+from scout.markets import MARKETS, CONCEPT, PLAY, LABEL, CARD_HEADING, PROMPT_NAME, present
 
 DHAKA = ZoneInfo("Asia/Dhaka")
 
@@ -232,9 +233,7 @@ def card_prompt_for(f: dict, res: dict, market: str) -> tuple[str, set[str], set
     )
     p = prompts.card_prompt(
         {
-            "market": "Bangladesh"
-            if market == "bangladesh"
-            else "global (sell abroad from Bangladesh)",
+            "market": PROMPT_NAME[market],
             "facts": _facts_text(f),
             "scores": json.dumps(scores),
             "news": news or "(none)",
@@ -286,7 +285,7 @@ def _sources(f: dict, data: dict) -> list[str]:
 
 
 def _no_version(j, market):
-    concept = j.get("concept_bd" if market == "bangladesh" else "concept_global")
+    concept = j.get(CONCEPT[market])
     return concept is not None and concept.strip().lower() in ("", "none")
 
 
@@ -294,7 +293,7 @@ def score_line(j):
     from scout.score import half_up, shown_verdict as verdict
 
     parts = []
-    for market, label in (("bangladesh", "Bangladesh"), ("global", "Global")):
+    for market, label in ((m, LABEL[m]) for m in present(j)):
         if _no_version(j, market):
             parts.append(f"{label}: no version")
         else:
@@ -305,6 +304,8 @@ def score_line(j):
 DIM_ORDER = {
     "bangladesh": ["demand", "readiness", "competition_gap", "regulatory_path", "economics"],
     "global": ["demand_abroad", "remote_delivery", "cost_advantage", "trust_burden", "competition_gap"],
+    "service": ["buyer_breadth", "pain_budget", "cost_advantage", "reachability", "repeatable_revenue",
+                "remote_delivery", "trust_burden", "competition_gap"],
 }
 
 
@@ -318,12 +319,13 @@ def card_text(f, data, model_id, today, new_round=False):
         or "round unknown"
     )
     announced = when_label(r.get("announced_at") if r else None, today)
-    effort = j["what_it_takes"]
-    effort_text = f"{effort['build_type'].replace('_', ' ')} · {effort['capital']} · team {effort['team']} · {effort['licence'] if effort['licence'].lower() != 'none' else 'no licence'} · revenue in {effort['time_to_revenue']}"
     market = data.get("market", "bangladesh")
-    play = data["bangladesh_play" if market == "bangladesh" else "global_play"]
+    effort = (j.get("service_what_it_takes") if market == "service" else None) or j["what_it_takes"]
+    effort_text = f"{effort['build_type'].replace('_', ' ')} · {effort['capital']} · team {effort['team']} · {effort['licence'] if effort['licence'].lower() != 'none' else 'no licence'} · revenue in {effort['time_to_revenue']}"
+    play = data.get(PLAY[market]) or ""
     play = " ".join(sentences(play)[:2])
-    idea = " ".join(data["one_liner"].split()[:15])
+    words = data["one_liner"].split()
+    idea = " ".join(words[:18]).rstrip(",;:") + ("…" if len(words) > 18 else "")
     from scout.normalize import place_label
 
     place = place_label(s["country"], s.get("region"))
@@ -335,7 +337,7 @@ def card_text(f, data, model_id, today, new_round=False):
     # Writer remarks about its own inputs ("No company homepage was available in the material") are not facts.
     said = [x for x in sentences(what) if not _REMARK.search(x)]
     startup = clip(said[0], 170) if said and what.lower() != "unknown" else ""
-    label = "In Bangladesh" if market == "bangladesh" else "Abroad from Bangladesh"
+    label = CARD_HEADING[market]
     risk = data["main_risk"]
 
     def render():
@@ -376,8 +378,11 @@ def full_analysis(card, deep=None, include_model=False):
         ("Evidence", "evidence"),
         ("In Bangladesh", "bangladesh_play"),
         ("Abroad from Bangladesh", "global_play"),
+        ("Service from Bangladesh", "service_play"),
         ("Already in Bangladesh", "already_here"),
     ]:
+        if key == "service_play" and (not d.get(key) or _no_version(j, "service")):
+            continue
         lines += ["", f"*{title}*", d.get(key) or "unknown"]
         if key == "already_here":
             lines += [f"- {c['name']}: {c['url']}" for c in d.get("competitors", [])]
@@ -394,16 +399,20 @@ def full_analysis(card, deep=None, include_model=False):
         "remote_delivery": "remote",
         "cost_advantage": "cost edge",
         "trust_burden": "trust",
+        "buyer_breadth": "buyers",
+        "pain_budget": "pain and budget",
+        "reachability": "reach",
+        "repeatable_revenue": "repeatable",
     }
-    for mk in ("bangladesh", "global"):
+    for mk in [m for m in present(j) if m in dims]:
         if _no_version(j, mk):
-            lines += [f"{mk.capitalize()}: no sensible version for this market."]
+            lines += [f"{LABEL[mk]}: no sensible version for this market."]
             continue
         order = [k for k in DIM_ORDER[mk] if k in dims[mk]] + [
             k for k in dims[mk] if k not in DIM_ORDER[mk]
         ]
         lines += [
-            f"{mk.capitalize()} {half_up(j[mk])}: "
+            f"{LABEL[mk]} {half_up(j[mk])}: "
             + " · ".join(f"{labels.get(k, k)} {dims[mk][k]['score']}" for k in order)
         ]
         lines += [f"- {labels.get(k, k)}: {dims[mk][k]['reason']}" for k in order]

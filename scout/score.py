@@ -8,6 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from collections import Counter
 from scout.llm import prompts, run as ai
 from scout.settings import effective
+from scout.markets import MARKETS, CONCEPT, SHORT, RANK
 
 
 def startup_material(conn, ids: list[int]) -> list[dict]:
@@ -135,14 +136,21 @@ def calculate(data, classification, cfg=None):
     d = copy.deepcopy(data)
     known = product_known(classification)
     cap = cfg["scoring"]["unknown_product_max"]
+    tracks = [m for m in MARKETS if m in d and m in cfg["scoring"]]
     if not known:
-        for group in ("bangladesh", "global"):
+        for group in tracks:
             for dim in d[group].values():
                 dim["score"] = min(cap, dim["score"])
         d["timing"]["score"] = min(cap, d["timing"]["score"])
         d["confidence"] = "low"
     markets = {}
-    for market, concept in [("bangladesh", "concept_bd"), ("global", "concept_global")]:
+    gate = cfg["scoring"].get("service_min_remote_delivery", 6)
+    if "service" in tracks and d["service"]["remote_delivery"]["score"] < gate:
+        # No software-delivered version means no service version: this work cannot be done from Bangladesh.
+        d["service_gate"] = d.get(CONCEPT["service"])  # what the model proposed, kept for review
+        d[CONCEPT["service"]] = "none"
+    for market in tracks:
+        concept = CONCEPT[market]
         weights = cfg["scoring"][market]
         val = sum(
             (d["timing"] if key == "timing" else d[market][key])["score"] * weight
@@ -150,12 +158,12 @@ def calculate(data, classification, cfg=None):
         ) / sum(weights.values())
         markets[market] = (
             1.0
-            if d[concept].strip().lower() in ("none", "")
+            if (d.get(concept) or "").strip().lower() in ("none", "")
             else float(
                 Decimal(str(val)).quantize(Decimal(".1"), rounding=ROUND_HALF_UP)
             )
         )
-    d["dimensions"] = {k: d.pop(k) for k in ("bangladesh", "global")}
+    d["dimensions"] = {k: d.pop(k) for k in tracks}
     d.update(markets)
     d.update(classification)
     d["schema_version"] = 2
@@ -177,7 +185,7 @@ def rank_scores(d, cfg):
     )
     return {
         market: round(val + evidence - penalty, 2)
-        for market, val in ((m, d[m]) for m in ("bangladesh", "global"))
+        for market, val in ((m, d[m]) for m in MARKETS if d.get(m) is not None)
     }
 
 
@@ -236,8 +244,8 @@ def score(conn, ids, run_date):
                     )
 
                 raw["traction"] = normalize_metric(raw["traction"])
-                for market in ("bangladesh", "global"):
-                    for dim in raw[market].values():
+                for market in MARKETS:
+                    for dim in raw.get(market, {}).values():
                         dim["reason"] = normalize_metric(dim["reason"])
             raw["bangladesh"]["competition_gap"] = {
                 "score": 5,
@@ -246,7 +254,7 @@ def score(conn, ids, run_date):
             evidence_rules(raw)
             d, ranks = calculate(raw, c, cfg)
             conn.execute(
-                "insert into scores(startup_id,model_id,scores_json,reasons_json,ai_angle,confidence,run_date,category,skip,rank_bd,rank_global,concepts_json)\n                values(%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s,%s)",
+                "insert into scores(startup_id,model_id,scores_json,reasons_json,ai_angle,confidence,run_date,category,skip,rank_bd,rank_global,rank_service,concepts_json)\n                values(%s,%s,%s,%s,%s,%s,%s,%s,false,%s,%s,%s,%s)",
                 (
                     result.startup_id,
                     out.model_id,
@@ -258,9 +266,8 @@ def score(conn, ids, run_date):
                     c.get("sector", "other"),
                     ranks["bangladesh"],
                     ranks["global"],
-                    json.dumps(
-                        {"bangladesh": d["concept_bd"], "global": d["concept_global"]}
-                    ),
+                    ranks.get("service"),
+                    json.dumps({m: d.get(CONCEPT[m]) for m in MARKETS}),
                 ),
             )
             stats["scored"] += 1
@@ -296,18 +303,23 @@ def shortlist(rows, mix, min_score=6.5, reserve=3, *, cfg=None, **options):
 
     def ranking(r, mk):
         return (
-            float(r["rank_bd" if mk == "bangladesh" else "rank_global"]),
+            float(r.get(RANK[mk]) if r.get(RANK[mk]) is not None else -1),
             confidence.get(r.get("conf"), 0),
             r.get("buzz", 0),
             -r["startup_id"],
         )
 
     def best(r):
-        return max(ranking(r, "bangladesh"), ranking(r, "global"))
+        return max(ranking(r, mk) for mk in MARKETS)
+
+    def top(r):
+        return max(r.get(SHORT[mk]) or 0 for mk in MARKETS)
 
     picks = []
 
-    def ok(r, current, relax=False):
+    def ok(r, current, relax=False, mk=None):
+        """mk = the track being filled. Within a track every pick is a different sector; across the digest a
+        sector appears at most max_same_sector times. Without a track (explore rows) the sector must be new."""
         if any(p["startup_id"] == r["startup_id"] for p in current):
             return False
         if r.get("ai_native") and sum(
@@ -315,8 +327,11 @@ def shortlist(rows, mix, min_score=6.5, reserve=3, *, cfg=None, **options):
         ) >= div.get("max_ai_native", 3):
             return False
         if not relax:
-            if div.get("one_per_sector", True) and any(
-                p.get("sector") == r.get("sector") for p in current
+            same = [p for p in current if p.get("sector") == r.get("sector")]
+            if div.get("one_per_sector", True) and (
+                (mk is None and same)
+                or any(p.get("market") == mk for p in same)
+                or len(same) >= div.get("max_same_sector", 2)
             ):
                 return False
             if sum(
@@ -330,12 +345,16 @@ def shortlist(rows, mix, min_score=6.5, reserve=3, *, cfg=None, **options):
             dict(r, market=mk, fill=fill, diversity_relaxed=relaxed, fill_reason=reason)
         )
 
-    for mk, key in [("bangladesh", "bd"), ("global", "gl")]:
-        for r in sorted(candidates, key=lambda r: ranking(r, mk), reverse=True):
+    # Tracks take turns (Bangladesh, global, service, then again), so no track only gets the leftovers.
+    for turn in range(max(mix.values(), default=0)):
+        for mk in MARKETS:
+            key = SHORT[mk]
             if sum(p["market"] == mk for p in picks) >= mix.get(mk, 0):
-                break
-            if r[key] >= min_score and ok(r, picks):
-                add(r, mk)
+                continue
+            for r in sorted(candidates, key=lambda r: ranking(r, mk), reverse=True):
+                if (r.get(key) or 0) >= min_score and ok(r, picks, mk=mk):
+                    add(r, mk)
+                    break
     normal_count = len(picks)
 
     def non_us(r):
@@ -348,49 +367,54 @@ def shortlist(rows, mix, min_score=6.5, reserve=3, *, cfg=None, **options):
             for target in targets:
                 remaining = [p for p in picks if p is not target]
                 for mk in (
-                    [
-                        target["market"],
-                        "global" if target["market"] == "bangladesh" else "bangladesh",
-                    ]
+                    [target["market"], *[m for m in MARKETS if m != target["market"]]]
                     if target
-                    else ["bangladesh", "global"]
+                    else list(MARKETS)
                 ):
-                    key = "bd" if mk == "bangladesh" else "gl"
+                    key = SHORT[mk]
                     eligible = [
                         r
                         for r in candidates
-                        if non_us(r) and r[key] >= threshold and ok(r, remaining)
+                        if non_us(r) and (r.get(key) or 0) >= threshold and ok(r, remaining, mk=mk)
                     ]
                     if eligible:
                         r = max(eligible, key=lambda r: ranking(r, mk))
                         picks[:] = remaining
-                        add(r, mk, fill=r[key] < min_score, reason="outside USA")
+                        add(r, mk, fill=(r.get(key) or 0) < min_score, reason="outside USA")
                         found = True
                         break
                 if found:
                     break
             if found:
                 break
+    # Slow days: first fill each track to its own share with Watch ideas, then any track up to the minimum.
+    for mk in MARKETS:
+        key = SHORT[mk]
+        for r in sorted(candidates, key=lambda r: ranking(r, mk), reverse=True):
+            if sum(p["market"] == mk for p in picks) >= mix.get(mk, 0) or len(picks) >= minimum:
+                break
+            if (r.get(key) or 0) >= floor and ok(r, picks, mk=mk):
+                add(r, mk, True, False, "track share")
     for relaxed in (False, True):
         for r in sorted(candidates, key=best, reverse=True):
             if len(picks) >= minimum:
                 break
-            mk = "bangladesh" if r["bd"] >= r["gl"] else "global"
-            if max(r["bd"], r["gl"]) >= floor and ok(r, picks, relaxed):
+            mk = max(MARKETS, key=lambda m: r.get(SHORT[m]) or 0)
+            if top(r) >= floor and ok(r, picks, relaxed, mk=mk):
                 add(r, mk, True, relaxed, "minimum picks")
     selected = {r["startup_id"] for r in picks}
     spare = [
         r
         for r in sorted(candidates, key=best, reverse=True)
-        if r["startup_id"] not in selected and max(r["bd"], r["gl"]) >= floor
+        if r["startup_id"] not in selected and top(r) >= floor
     ]
     explore = []
     for r in sorted(
         spare, key=lambda r: (not r.get("ai_native"), best(r)), reverse=True
     ):
-        if len(explore) >= div.get("explore_rows", 5):
+        if len(explore) >= min(div.get("explore_rows", 5), 10 - len(picks)):
             break
-        if max(r["bd"], r["gl"]) >= div.get("explore_min_score", 5) and ok(
+        if top(r) >= div.get("explore_min_score", 5) and ok(
             r, picks + explore
         ):
             explore.append(r)
@@ -401,7 +425,7 @@ def shortlist(rows, mix, min_score=6.5, reserve=3, *, cfg=None, **options):
                 key=lambda r: ranking(r, mk),
                 reverse=True,
             )
-            for mk in ("bangladesh", "global")
+            for mk in MARKETS
         },
         "reserve": spare[:reserve],
         "explore": explore,
@@ -426,8 +450,10 @@ def todays_rows(conn, run_date):
                 "score_id": sc["id"],
                 "bd": float(j["bangladesh"]),
                 "gl": float(j["global"]),
+                "sv": float(j["service"]) if j.get("service") is not None else None,
                 "rank_bd": float(sc["rank_bd"]),
                 "rank_global": float(sc["rank_global"]),
+                "rank_service": float(sc["rank_service"]) if sc.get("rank_service") is not None else None,
                 "sector": j.get("sector", cl.get("sector")),
                 "business_model": j.get("business_model", cl.get("business_model")),
                 "ai_native": j.get("ai_native", False),
@@ -453,7 +479,10 @@ def exploration(rows, picks, cfg):
     out = []
     for r in sorted(
         rows,
-        key=lambda r: (not r.get("ai_native"), max(r["rank_bd"], r["rank_global"])),
+        key=lambda r: (
+            not r.get("ai_native"),
+            max(r.get(RANK[m]) if r.get(RANK[m]) is not None else -1 for m in MARKETS),
+        ),
         reverse=True,
     ):
         if len(out) >= min(div["explore_rows"], 10 - len(picks)):
@@ -466,7 +495,7 @@ def exploration(rows, picks, cfg):
             or not ambition_ok(r, cfg["ambition"])
         ):
             continue
-        if max(r["bd"], r["gl"]) < div["explore_min_score"]:
+        if max(r.get(SHORT[m]) or 0 for m in MARKETS) < div["explore_min_score"]:
             continue
         if div["one_per_sector"] and r.get("sector") in sectors:
             continue
