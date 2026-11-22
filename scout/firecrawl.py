@@ -70,6 +70,8 @@ def scrape(conn, url: str, fmt: str = "rawHtml", kind: str = "feed", http: httpx
         raise FirecrawlUnavailable(type(e).__name__) from None
     finally:
         if conn is not None:
-            # a request that reached Firecrawl uses a credit even if the site refused
-            repo.record_usage(conn, provider="firecrawl", model_id=None, key_label=None, kind=kind,
-                              status="ok" if status in ("ok", "empty") else status)
+            # A request that reached Firecrawl uses a credit even if the site refused. Own connection, so a
+            # rolled-back dry run still counts against the daily and monthly caps.
+            with repo.connect() as own:
+                repo.record_usage(own, provider="firecrawl", model_id=None, key_label=None, kind=kind,
+                                  status="ok" if status in ("ok", "empty") else status)
