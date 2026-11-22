@@ -209,7 +209,7 @@ begin
 end $$;
 
 -- ---------- Phase 1 additions ----------
-alter table items    add column if not exists kind text;              -- funding | launch | other | prefiltered | yc
+alter table items    add column if not exists kind text;              -- funding | launch | other | prefiltered | stale | yc
 alter table items    add column if not exists extracted_at timestamptz;
 alter table startups add column if not exists website text;
 alter table startups add column if not exists yc_batch text;

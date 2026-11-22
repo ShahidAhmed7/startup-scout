@@ -194,6 +194,9 @@ _SENT_END = re.compile(
 )
 
 
+_REMARK = re.compile(r"\b(the material|the sources?|not (?:stated|available|provided|given)|unknown)\b", re.I)
+
+
 def sentences(text: str) -> list[str]:
     return [p for p in _SENT_END.split((text or "").strip()) if p]
 
@@ -324,16 +327,30 @@ def card_text(f, data, model_id, today, new_round=False):
     from scout.normalize import place_label
 
     place = place_label(s["country"], s.get("region"))
-    head = f"{clip(place, 40)} · {clip(round_txt, 70)} · announced {announced}\n{score_line(j)}\n\n*The idea*\n{idea}"
+    head = f"{clip(place, 40)} · {clip(round_txt, 70)} · announced {announced}\n{score_line(j)}"
+    # What the funded startup itself does (fact-gated), so the adapted idea has its source.
+    what = (data.get("what_they_do") or "").strip()
+    if not what or what.lower() == "unknown":
+        what = (s.get("description") or "").strip()
+    # Writer remarks about its own inputs ("No company homepage was available in the material") are not facts.
+    said = [x for x in sentences(what) if not _REMARK.search(x)]
+    startup = clip(said[0], 170) if said and what.lower() != "unknown" else ""
     label = "In Bangladesh" if market == "bangladesh" else "Abroad from Bangladesh"
     risk = data["main_risk"]
 
     def render():
-        return f"{head}\n\n*{label}*\n{play}\n\n*What it takes*\n{effort_text}\n\n*Watch out*\n{risk}"
+        top = f"{head}\n\n*The startup*\n{startup}" if startup else head
+        return (f"{top}\n\n*The idea*\n{idea}\n\n*{label}*\n{play}\n\n*What it takes*\n{effort_text}"
+                f"\n\n*Watch out*\n{risk}")
 
-    # Reduce the play first, then risk. Protect the score and the opportunity.
+    # Reduce the play first, then the startup line, then risk. Protect the score and the opportunity.
+    # Drop a whole sentence before cutting inside one.
+    while len(render()) > 1024 and len(sentences(play)) > 1:
+        play = " ".join(sentences(play)[:-1])
     while len(render()) > 1024 and len(play) > 70:
         play = clip(play, max(70, len(play) - (len(render()) - 1024)))
+    while len(render()) > 1024 and len(startup) > 80:
+        startup = clip(startup, max(80, len(startup) - (len(render()) - 1024)))
     while len(render()) > 1024 and len(risk) > 40:
         risk = clip(risk, max(40, len(risk) - (len(render()) - 1024)))
     if len(render()) > 1024:

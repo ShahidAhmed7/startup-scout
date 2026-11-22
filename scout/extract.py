@@ -22,6 +22,21 @@ def prefilter(title: str, summary: str) -> bool:
     return bool(FUNDING_WORDS.search(f"{title} {summary}"))
 
 
+# Aggregators (Google News) sometimes re-date old articles. A plan aimed at a past year gives them away:
+# "Lime raises $523 mln, eyes going public in 2022".
+_PLAN_YEAR = re.compile(
+    r"\b(?:eyes|eyeing|plans?|planning|targets?|targeting|aims?|aiming|expects?|expecting|to go public|ipo)\b"
+    r"[^.|]{0,40}?\b(20\d\d)\b", re.I)
+
+
+def stale(title: str, summary: str, year: int | None = None) -> bool:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    year = year or datetime.now(ZoneInfo("Asia/Dhaka")).year
+    return any(int(m.group(1)) < year for m in _PLAN_YEAR.finditer(f"{title} {summary}"))
+
+
 def pending_items(conn, hours: int = 48) -> list[dict]:
     return conn.execute(
         """select i.id, i.source_id, i.url, i.title, i.summary, i.kind, i.raw_json, i.published_at
@@ -61,6 +76,9 @@ def extract(conn, limit: int | None = None) -> dict:
         elif s.get("role") == "context":
             stats["context"] += 1
             conn.execute("update items set kind = 'context', extracted_at = now() where id = %s", (it["id"],))
+        elif stale(it["title"] or "", it["summary"] or ""):
+            stats["stale"] = stats.get("stale", 0) + 1
+            conn.execute("update items set kind = 'stale', extracted_at = now() where id = %s", (it["id"],))
         elif not prefilter(it["title"] or "", it["summary"] or ""):
             stats["prefiltered"] += 1
             conn.execute("update items set kind = 'prefiltered', extracted_at = now() where id = %s", (it["id"],))

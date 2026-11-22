@@ -310,3 +310,35 @@ def test_prefilter_catches_backs_investments_and_euro_amounts():
     assert prefilter("SIFC starts attracting global investments for local startups", "")
     assert prefilter("Berlin's Acme picks up €4M", "")
     assert not prefilter("Pakistan wins Blind T20 Asia Cup", "")
+
+
+def test_stale_news_with_a_past_plan_year_is_dropped():
+    from scout.extract import stale
+
+    assert stale("E-scooter startup Lime raises $523 mln, eyes going public in 2022 - ET Auto", "", 2026)
+    assert not stale("Acme raises $5M, plans to expand in 2027", "", 2026)
+    assert not stale("Acme, founded in 2019, raises $5M Series A", "", 2026)
+
+
+def test_extract_prompt_states_today():
+    from scout.llm import prompts
+
+    assert "Today is 2026-11-22" in prompts.extract_prompt([], today="2026-11-22")
+
+
+def test_card_says_what_the_startup_does_before_the_idea(monkeypatch):
+    from scout import cards
+
+    j = {
+        "what_it_takes": {"build_type": "software", "capital": "bootstrap", "team": "2-5",
+                          "licence": "none", "time_to_revenue": "under 3 months"},
+    }
+    f = {"startup": {"country": "USA", "region": "usa", "description": "Tracks AI agents."},
+         "round": {"stage": "Seed", "amount_text": "$500K", "announced_at": None},
+         "score": {"scores_json": j}}
+    data = {"market": "global", "global_play": "Sell abroad. Get paid via Paddle.", "one_liner": "Monitor AI picks.",
+            "main_risk": "Free tools.", "what_they_do": "Gauge tracks how AI agents pick software. It raised a seed.",
+            "scores_snapshot": j}
+    monkeypatch.setattr(cards, "score_line", lambda j: "Global 7 · Promising")
+    text = cards.card_text(f, data, "m", None)
+    assert text.index("*The startup*\nGauge tracks how AI agents pick software.") < text.index("*The idea*")
