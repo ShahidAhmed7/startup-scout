@@ -183,7 +183,7 @@ def test_registry_constructs_an_openai_compatible_model_without_environment_key(
 def test_budget_guard_prevents_private_request(monkeypatch):
     from scout import budget
 
-    monkeypatch.setattr(budget, "month_spend", lambda conn: 25)
+    monkeypatch.setattr(budget, "month_spend", lambda conn: 30)
     with pytest.raises(guard.CapReached):
         guard.reserve_attempt(Conn(), "private", "note")
 

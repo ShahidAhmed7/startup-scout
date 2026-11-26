@@ -2,6 +2,12 @@
 timezone: Asia/Dhaka
 output_language: English
 digest_time: 08:00
+# When Google can't be reached, the pipeline retries every 30 minutes until 13:00 (done before Google's quota day
+# resets at 14:00 Dhaka) and the digest arrives late. Other failures keep the single retry.
+pipeline_retry:
+  every_minutes: 30
+  until: '13:00'
+  max_attempts: 10
 digest_mix:
   bangladesh: 2
   global: 2
@@ -27,6 +33,8 @@ skip_list:
 - energy infrastructure
 - space
 - biotech wet labs
+# Bulk daily jobs (score, extract, classify) never fall back to Qwen: on 2026-11-26 it could not finish them in
+# the run's hour and used ~$3.70 of GPU. They wait for Google instead (pipeline_retry).
 jobs:
   score:
   - &id001
@@ -38,7 +46,6 @@ jobs:
   - &id003
     - open_main
     - open_backup
-  - - private
   card:
   - *id001
   - *id002
@@ -72,11 +79,9 @@ jobs:
   extract:
   - *id002
   - *id003
-  - - private
   classify:
   - *id002
   - *id003
-  - - private
   private:
   - - private
 models:
@@ -157,8 +162,8 @@ firecrawl:
   monthly_credit_cap: 900
   daily_credit_cap: 40
 budget:
-  modal_warn_usd: 20
-  modal_stop_usd: 25
+  modal_warn_usd: 25
+  modal_stop_usd: 30
   a100_80gb_usd_per_second: 0.000694
   cpu_usd_per_core_second: 1.31e-05
   memory_usd_per_gib_second: 2.22e-06

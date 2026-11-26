@@ -78,12 +78,53 @@ def chain_for(job, private):
 BACKOFF = (4, 15)
 CHAIN_PATIENCE = 45
 
+# When Google's servers can't be reached at all (2026-11-26: every call from Modal failed to connect for 3.5
+# hours), trying each batch on every key and model only burns the run's hour. After this many network failures
+# in a row on Google entries, treat Google as unreachable for a while and fail its calls at once.
+NET_TRIP = 8
+NET_COOLDOWN_S = 600
+_net = {"fails": 0, "until": 0.0, "trips": 0}
+
+
+class GoogleUnreachable(LLMUnavailable):
+    transient_only = True
+
+
+def _is_google(entry) -> bool:
+    return config()["models"][entry]["model"].startswith("google:")
+
+
+def google_unreachable() -> bool:
+    import time
+
+    return time.monotonic() < _net["until"]
+
+
+def google_trips() -> int:
+    """How often Google was declared unreachable in this process (the pipeline reads it for its error)."""
+    return _net["trips"]
+
+
+def _net_result(entry, exc=None) -> None:
+    import time
+
+    if not _is_google(entry):
+        return
+    if exc is None:
+        _net["fails"] = 0
+    elif guard.network_failure(exc):
+        _net["fails"] += 1
+        if _net["fails"] >= NET_TRIP and not google_unreachable():
+            _net["until"] = time.monotonic() + NET_COOLDOWN_S
+            _net["trips"] += 1
+            _net["fails"] = 0
+
 
 async def _run(job, prompt, output_type, **kw):
     try:
         return await _run_chain(job, prompt, output_type, **kw)
     except LLMUnavailable as exc:
-        if not exc.transient_only:
+        if not exc.transient_only or google_unreachable():
             raise
     await asyncio.sleep(CHAIN_PATIENCE + random.uniform(0, 10))
     return await _run_chain(job, prompt, output_type, **kw)
@@ -115,6 +156,8 @@ async def _run_chain(
                     "model"
                 ].startswith("google:"):
                     raise guard.CapReached("Forced Google failure")
+                if _is_google(entry) and google_unreachable():
+                    raise GoogleUnreachable("Google was unreachable moments ago")
                 model = guard.GuardedModel(entry, registry.get_model(entry), job, conn)
                 retries = 0  # bad output and unknown errors: one retry on the same entry
                 waits = list(BACKOFF)  # overloads and timeouts: a few patient retries
@@ -130,6 +173,7 @@ async def _run_chain(
                             retries=0,
                         )
                         result = await agent.run(prompt)
+                        _net_result(entry)
                         if validate:
                             validate(result.output)
                         return Result(
@@ -150,6 +194,9 @@ async def _run_chain(
                                     "update usage set status='bad_output' where id=%s",
                                     (model.last_attempt,),
                                 )
+                        _net_result(entry, exc)
+                        if google_unreachable() and _is_google(entry):
+                            raise GoogleUnreachable("Google is unreachable") from exc
                         if not bad_output and guard.transient(exc) and waits:
                             await asyncio.sleep(waits.pop(0) + random.uniform(0, 2))
                             continue

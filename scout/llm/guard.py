@@ -56,6 +56,22 @@ async def wait_until_ready(base_url: str, deadline_s: float) -> None:
             await asyncio.sleep(5)
 
 
+def error_kind(exc) -> str:
+    """Exception class and failed transport stage, e.g. 'ModelTimeoutError/connect'. Never the message body."""
+    phase = getattr(exc, "phase", None)
+    cause = exc.__cause__
+    name = type(exc).__name__ + (f"/{phase}" if phase else "")
+    return (name + (f" <- {type(cause).__name__}" if cause else ""))[:80]
+
+
+def network_failure(exc) -> bool:
+    """The request never got a proper answer from the provider's server: it could not connect, or the
+    connection broke while sending. A slow answer (read phase) is a model problem, not a network one."""
+    from pydantic_ai.exceptions import ModelConnectionError
+
+    return isinstance(exc, ModelConnectionError) and getattr(exc, "phase", None) != "read"
+
+
 def attempt_status(exc) -> str:
     from pydantic_ai.exceptions import ModelUnavailableError
 
@@ -181,6 +197,7 @@ class GuardedModel(WrapperModel):
                 start = time.monotonic()
                 response = None
                 status = "server"
+                kind = None
                 try:
                     if cfg.get("budget_guard") and cfg.get("base_url_env"):
                         from scout.config import env
@@ -206,6 +223,7 @@ class GuardedModel(WrapperModel):
                     return response
                 except Exception as exc:
                     status = attempt_status(exc)
+                    kind = error_kind(exc)
                     raise
                 finally:
                     seconds = time.monotonic() - start
@@ -223,14 +241,15 @@ class GuardedModel(WrapperModel):
                         # it); the first request of a burst also pays the idle tail before scale-down.
                         gpu = seconds + (0 if warm else cfg.get("scaledown_seconds", 120))
                     conn.execute(
-                        """update usage set status=%s,tokens_in=%s,tokens_out=%s,seconds=%s,gpu_seconds=%s
-                        where id=%s""",
+                        """update usage set status=%s,tokens_in=%s,tokens_out=%s,seconds=%s,gpu_seconds=%s,
+                        error_kind=%s where id=%s""",
                         (
                             status,
                             usage.input_tokens if usage else None,
                             usage.output_tokens if usage else None,
                             seconds,
                             gpu,
+                            kind,
                             attempt,
                         ),
                     )

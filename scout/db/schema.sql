@@ -285,4 +285,6 @@ alter table startups add column if not exists classification_json jsonb;
 alter table startups add column if not exists extraction_json jsonb;
 alter table scores add column if not exists concepts_json jsonb;
 alter table usage add column if not exists seconds numeric;
+-- Exception class and failed stage of an unsuccessful AI call (e.g. "ModelTimeoutError/connect"), never its text.
+alter table usage add column if not exists error_kind text;
 -- Legacy owner-profile settings are ignored; preserve them for rollback.

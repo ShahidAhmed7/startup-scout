@@ -151,11 +151,20 @@ def run_pipeline(
     cfg = effective(conn)
     t = time.time()
     stats = {"run_date": str(run_date)}
+    from scout.llm import run as ai
+
+    trips = ai.google_trips()
     try:
         if not skip_collect:
             stats["collect"] = collect(conn)
         ex = extract(conn)
         stats["extract"] = ex["stats"]
+        from scout.extract import BATCH
+
+        llm_batches = -(-ex["stats"]["sent_to_llm"] // BATCH)
+        if llm_batches and ex["stats"]["failed_batches"] * 2 > llm_batches:
+            # Unread news stays pending; the retry (or tomorrow's run) reads it. Scoring a fraction is worse.
+            raise RuntimeError("Most extraction batches failed")
         m = merge(conn, ex["facts"])
         stats["merge"] = {k: len(v) if isinstance(v, set) else v for k, v in m.items()}
         if candidate_ids is None:
@@ -260,7 +269,14 @@ def run_pipeline(
         repo.finish_run(conn, rid, "ok", stats)
         return stats
     except Exception as exc:
-        repo.finish_run(conn, rid, "error", stats, error=type(exc).__name__)
+        # The scheduler keeps retrying through the morning only when Google itself could not be reached.
+        error = (
+            "GoogleUnreachable"
+            if ai.google_trips() > trips or ai.google_unreachable()
+            else type(exc).__name__
+        )
+        stats["google_unreachable"] = error == "GoogleUnreachable"
+        repo.finish_run(conn, rid, "error", stats, error=error)
         raise
 
 

@@ -6,7 +6,7 @@ def test_config_routing_and_scoring():
     assert cfg["jobs"]["score"][0] == ["strong_main", "strong_backup"]
     assert cfg["jobs"]["private"] == [["private"]]
     assert cfg["min_score"] == 6.5 and cfg["fill_min_score"] == 5
-    assert cfg["budget"]["modal_stop_usd"] <= 25
+    assert cfg["budget"]["modal_stop_usd"] <= 30  # Modal Starter gives $30 of free credit a month
     for key in ("weights", "owner", "ai_angle", "min_feasibility"):
         assert key not in cfg
     for chain in list(cfg["jobs"].values()) + list(cfg["dev_jobs"].values()):

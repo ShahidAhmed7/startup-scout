@@ -1,8 +1,8 @@
-"""Budget guard (AGENTS.md section 6). Modal's free Starter plan gives $30/month; our ceiling is $25.
+"""Budget guard (AGENTS.md section 6). Modal's free Starter plan gives $30/month; our ceiling is $30 (raised from $25 on 2026-11-26).
 
 Estimate = Qwen GPU seconds this month x A100-80GB price + a small CPU allowance.
-- At $20: warn the owner once (queued until the 24-hour window is open).
-- At $25: no GPU until the 1st; Gemini only.
+- At $25: warn the owner once (queued until the 24-hour window is open).
+- At $30: no GPU until the 1st; Gemini only.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def gpu_blocked(conn) -> bool:
 
 
 def warning_due(conn) -> str | None:
-    """The $20 warning text, once per month (remembered in `settings`), else None."""
+    """The budget warning text, once per month (remembered in `settings`), else None."""
     b = config()["budget"]
     spend = month_spend(conn)
     if spend < b["modal_warn_usd"]:

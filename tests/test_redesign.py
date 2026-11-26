@@ -246,7 +246,7 @@ def test_settings_ignore_legacy_skills_and_internal_keys():
     assert (
         "owner" not in cfg
         and cfg["ambition"] == "seed"
-        and cfg["budget"]["modal_stop_usd"] == 25
+        and cfg["budget"]["modal_stop_usd"] == 30
     )
 
 

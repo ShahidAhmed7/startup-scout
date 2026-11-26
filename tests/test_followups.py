@@ -57,7 +57,8 @@ def _run_private(monkeypatch, warm):
 
     result = asyncio.run(go())
     assert result.output == "ok"
-    status, _, _, seconds, gpu, attempt = conn.updates[-1]
+    status, _, _, seconds, gpu, kind, attempt = conn.updates[-1]
+    assert kind is None  # a successful call has no error kind
     return status, seconds, gpu, attempt, cfg
 
 

@@ -59,7 +59,7 @@
 ### Operate
 <table>
 <tr><td width="50%" valign="top"><b>Personalised ranking</b><br>Saves and skips refine future recommendations, within limits that keep results broad.</td><td width="50%" valign="top"><b>Weekly and monthly reports</b><br>New Y Combinator companies worth a look every week; funding trends in markets like Bangladesh every month.</td></tr>
-<tr><td width="50%" valign="top"><b>Private web archive</b><br>A secure, searchable archive of every card with filters, plus a board view of your notebook. Sign in from your phone with one tap.</td><td width="50%" valign="top"><b>Built for reliability</b><br>Multiple AI models back each other up, including a self-hosted fallback, with budget controls that keep it on free tiers. Overloaded providers are retried patiently, and a run that mostly fails stops and retries itself before the digest is due.</td></tr>
+<tr><td width="50%" valign="top"><b>Private web archive</b><br>A secure, searchable archive of every card with filters, plus a board view of your notebook. Sign in from your phone with one tap.</td><td width="50%" valign="top"><b>Built for reliability</b><br>Multiple AI models back each other up, including a self-hosted fallback, with budget controls that keep it on free tiers. Overloaded providers are retried patiently, a run that mostly fails stops and retries itself, and if Google cannot be reached at all the bot keeps retrying through the morning and sends the digest late instead of spending GPU budget.</td></tr>
 </table>
 
 
@@ -218,10 +218,16 @@ Private data never reaches a third-party provider, and the briefing keeps runnin
                       └────────────┬───────────┘                                    │
                                    │ both keys fail                                 │
                                    ▼                                                │
-                      ┌────────────────────────┐    within budget                   │
-                      │ budget guard           ├────────────────────────────────────┘
+                      ┌────────────────────────┐    no: a card or chat              │
+                      │ bulk daily job?        ├──────────────────┐                 │
+                      └────────────┬───────────┘                  ▼                 │
+                                   │ yes              ┌────────────────────────┐    │
+                                   ▼                  │ budget guard           ├────┘
+                      ┌────────────────────────┐      └────────────────────────┘
+                      │ wait for Google: retry │
+                      │ every 30 min to 13:00  │
                       └────────────┬───────────┘
-                                   │ over budget
+                                   │ still unreachable
                                    ▼
                       ┌────────────────────────┐
                       │ "skipped today" notice │

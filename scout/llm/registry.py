@@ -30,6 +30,26 @@ def settings(entry):
     return result
 
 
+# Pydantic AI's own Google client gives a connection only 5 s to open. On 2026-11-26 every Google call from
+# Modal failed that way for 3.5 hours while feeds and Firecrawl still worked, so allow a slow network more time.
+CONNECT_TIMEOUT_S = 30
+POOL_WRITE_TIMEOUT_S = 60
+
+
+def _google_http_client(timeout_s):
+    import httpx2
+    from pydantic_ai.models import create_async_httpx2_client
+
+    return create_async_httpx2_client(
+        timeout=httpx2.Timeout(
+            timeout_s,
+            connect=CONNECT_TIMEOUT_S,
+            pool=POOL_WRITE_TIMEOUT_S,
+            write=POOL_WRITE_TIMEOUT_S,
+        )
+    )
+
+
 @lru_cache(maxsize=None)
 def get_model(entry):
     cfg = config()["models"][entry]
@@ -37,7 +57,10 @@ def get_model(entry):
     key = require_env(cfg["key_env"]) if cfg.get("key_env") else None
     base = require_env(cfg["base_url_env"]) if cfg.get("base_url_env") else None
     if provider == "google":
-        return GoogleModel(model, provider=GoogleProvider(api_key=key, base_url=base))
+        client = _google_http_client(cfg.get("settings", {}).get("timeout_s", 300))
+        return GoogleModel(
+            model, provider=GoogleProvider(api_key=key, base_url=base, http_client=client)
+        )
     if provider == "openai-chat":
         return OpenAIChatModel(
             model, provider=OpenAIProvider(api_key=key, base_url=base)
